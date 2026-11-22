@@ -1018,6 +1018,8 @@ void handle_expose(XExposeEvent *ev)
         return;
     if (system_center_expose(ev))
         return;
+    if (settings_expose(ev))
+        return;
     if (control_center_expose(ev))
         return;
     if (notification_center_expose(ev))

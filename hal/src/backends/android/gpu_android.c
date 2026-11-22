@@ -50,7 +50,9 @@ static void fill_node_info(const char *name, const char *vendor,
     (void)hal_strlcpy(g.node_info.driver, driver,
                       sizeof(g.node_info.driver));
     g.node_info.type = HAL_GPU_TYPE_INTEGRATED;
-    g.node_info.render_capable = true;
+
+    /* Device detection does not verify hardware rendering. */
+    g.node_info.render_capable = false;
     g.node_info.modeset_capable = false;
 }
 
@@ -70,13 +72,13 @@ static hal_status_t android_gpu_probe(bool *available, uint32_t *capabilities)
 
     st = open_gpu_node("/dev/kgsl-3d0");
     if (st == HAL_OK) {
-        fill_node_info("Adreno (kgsl-3d0)", "Qualcomm", "kgsl");
+        fill_node_info("Qualcomm KGSL GPU", "Qualcomm", "kgsl");
         g.mode = MODE_KGSL;
         if (available != NULL) {
             *available = true;
         }
         if (capabilities != NULL) {
-            *capabilities = HAL_GPU_CAP_RENDER;
+            *capabilities = 0;
         }
         return HAL_OK;
     }
@@ -93,7 +95,7 @@ static hal_status_t android_gpu_probe(bool *available, uint32_t *capabilities)
             *available = true;
         }
         if (capabilities != NULL) {
-            *capabilities = HAL_GPU_CAP_RENDER;
+            *capabilities = 0;
         }
         return HAL_OK;
     }

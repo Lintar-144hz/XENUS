@@ -339,6 +339,7 @@ void shell_refresh_theme(void)
         frame_paint(c);
     panel_update();
     system_center_redraw();
+    settings_redraw();
     control_center_tick();
     notification_center_tick();
     XFlush(sc.dpy);
@@ -421,6 +422,8 @@ static void dispatch(XEvent *ev)
         if (msgbox_motion(&ev->xmotion))
             break;
         if (system_center_motion(&ev->xmotion))
+            break;
+        if (settings_motion(&ev->xmotion))
             break;
         if (control_center_motion(&ev->xmotion))
             break;
@@ -581,6 +584,7 @@ static void event_loop(void)
 static void cleanup(void)
 {
     system_center_cleanup();
+    settings_cleanup();
     control_center_cleanup();
     notification_center_cleanup();
     security_gui_cleanup();
@@ -680,6 +684,7 @@ static void usage(int code)
            "  Alt+L-drag    move window           Alt+R-drag   resize window\n"
            "  Alt+Enter     start terminal        Alt+E        file manager\n"
            "  Alt+S         security center       Alt+Up       maximize\n"
+           "  Alt+I         settings              Alt+C        control center\n"
            "  Alt+Down      minimize              Alt+Left/Right snap halves\n"
            "  Alt+D         show desktop\n"
            "  right click desktop   desktop menu\n"

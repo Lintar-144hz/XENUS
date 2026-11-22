@@ -637,7 +637,6 @@ static void sc_refresh(int all)
 
     xenus_core_load(&sc_load);
     sc_info = *xenus_core_sysinfo();
-    xenus_core_hardware(&sc_hw, 0);
     sc_nmods = xenus_core_modules(sc_mods, XENUS_CORE_MAX_MODULES);
     sc_nsvcs = xenus_core_services(sc_svcs, XENUS_CORE_MAX_SERVICES);
     sc_nlogs = xenus_core_log_entries(sc_logs, XENUS_CORE_LOG_RING);
@@ -757,8 +756,7 @@ void system_center_show(void)
     }
     sc_open = 1;
     sc_hover = -1;
-    sc_last_ms = 0;
-    sc_refresh(1);
+    sc_last_ms = sc_now();
     XMapRaised(sc.dpy, sc_win);
     focus_track(sc_win);
     log_msg("sc mapped win=0x%lx", (unsigned long)sc_win);
@@ -947,7 +945,7 @@ int system_center_button(XButtonEvent *ev)
         if (y >= SC_TITLE + 62 && idx >= 0 && idx < SC_TAB_COUNT) {
             sc_tab = idx;
             sc_status[0] = '\0';
-            sc_refresh(1);
+            sc_refresh(0);
             sc_draw();
         }
         return 1;

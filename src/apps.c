@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #define MAX_APPS 512
 
@@ -626,6 +627,40 @@ void apps_run_files(void)
     }
 }
 
+
+/* Hide selected entries from Start Menu only; keep applications installed. */
+static int launcher_hidden_entry(const MenuEntry *entry)
+{
+    const char *hidden[] = {
+        "editor",
+        "control panel",
+        "imagemagick",
+        "removable drives and media",
+        "mpv media player",
+        NULL
+    };
+    const char *fields[] = { entry->label, entry->cmd, NULL };
+
+    for (int f = 0; fields[f]; f++) {
+        for (int h = 0; hidden[h]; h++) {
+            const char *p = fields[f];
+            size_t len = strlen(hidden[h]);
+
+            while (*p) {
+                size_t i = 0;
+                while (i < len && p[i] &&
+                       (unsigned char)tolower((unsigned char)p[i]) ==
+                       (unsigned char)hidden[h][i])
+                    i++;
+                if (i == len)
+                    return 1;
+                p++;
+            }
+        }
+    }
+    return 0;
+}
+
 /* build the launcher menu: pinned entries, separator, installed apps */
 void apps_scan(void)
 {
@@ -664,15 +699,29 @@ void apps_scan(void)
     }
     sc.menu_item_count = 0;
 
-    for (i = 0; i < cfg.menu_count; i++)
-        sc.menu_items[sc.menu_item_count++] = cfg.menu[i];
-    if (n > 0) {
-        str_copy(sc.menu_items[sc.menu_item_count].label,
-                 sizeof(sc.menu_items[0].label), "-");
-        sc.menu_items[sc.menu_item_count].cmd[0] = '\0';
-        sc.menu_item_count++;
-        for (i = 0; i < n; i++)
-            sc.menu_items[sc.menu_item_count++] = apps[i];
+    for (i = 0; i < cfg.menu_count; i++) {
+        if (!launcher_hidden_entry(&cfg.menu[i]))
+            sc.menu_items[sc.menu_item_count++] = cfg.menu[i];
+    }
+
+    {
+        int visible_apps = 0;
+        for (i = 0; i < n; i++) {
+            if (!launcher_hidden_entry(&apps[i]))
+                visible_apps++;
+        }
+
+        if (visible_apps > 0) {
+            str_copy(sc.menu_items[sc.menu_item_count].label,
+                     sizeof(sc.menu_items[0].label), "-");
+            sc.menu_items[sc.menu_item_count].cmd[0] = '\0';
+            sc.menu_item_count++;
+
+            for (i = 0; i < n; i++) {
+                if (!launcher_hidden_entry(&apps[i]))
+                    sc.menu_items[sc.menu_item_count++] = apps[i];
+            }
+        }
     }
     if (sc.menu_item_count > 0) {        /* separator + Security Center */
         str_copy(sc.menu_items[sc.menu_item_count].label,

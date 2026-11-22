@@ -457,6 +457,7 @@ static void cc_settings(void)
 
 static void cc_draw(void)
 {
+    uint64_t started = cc_now();
     if (!cc_win)
         return;
     cc_nhits = 0;
@@ -468,6 +469,7 @@ static void cc_draw(void)
     else
         cc_quick();
     XFlush(sc.dpy);
+    log_msg("cc profile draw=%llu ms", (unsigned long long)(cc_now() - started));
 }
 
 /* --------------------------------------------------------------- actions */
@@ -663,6 +665,7 @@ static void cc_set_brightness_from_x(int x)
 
 void control_center_show(void)
 {
+    uint64_t started = cc_now();
     if (!cc_win) {
         XSetWindowAttributes wa;
 
@@ -684,6 +687,7 @@ void control_center_show(void)
                                &wa);
         XStoreName(sc.dpy, cc_win, "XENUS Control Center");
         ui_shape_round(cc_win, CC_W, CC_H, 16);
+        log_msg("cc profile create=%llu ms", (unsigned long long)(cc_now() - started));
     }
     cc_open = 1;
     cc_page = CC_PAGE_QUICK;
@@ -691,12 +695,13 @@ void control_center_show(void)
     cc_drag = -1;
     cc_status[0] = ' ';
     cc_last_tick = 0;
-    cc_refresh_hw(1);
     XMapRaised(sc.dpy, cc_win);
     focus_track(cc_win);
     log_msg("cc show mapped win=0x%lx", (unsigned long)cc_win);
     XFlush(sc.dpy);
+    log_msg("cc profile map=%llu ms", (unsigned long long)(cc_now() - started));
     cc_draw();
+    log_msg("cc profile show-total=%llu ms", (unsigned long long)(cc_now() - started));
 }
 
 void control_center_show_settings(void)

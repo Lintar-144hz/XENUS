@@ -418,6 +418,10 @@ void handle_key_press(XKeyEvent *ev)
             system_center_key(ev);
             return;
         }
+        if (settings_open() && ev->window == settings_window()) {
+            settings_key(ev);
+            return;
+        }
         if (control_center_open() && ev->window == control_center_window()) {
             control_center_key(ev);
             return;
@@ -506,6 +510,9 @@ void handle_key_press(XKeyEvent *ev)
     case XK_s:
         security_gui_toggle();
         break;
+    case XK_i:
+        settings_toggle();
+        break;
     case XK_c:
         control_center_toggle();
         break;
@@ -528,6 +535,8 @@ void handle_button_press(XButtonEvent *ev)
     if (msgbox_button(ev))
         return;
     if (system_center_button(ev))
+        return;
+    if (settings_button(ev))
         return;
     if (control_center_button(ev))
         return;

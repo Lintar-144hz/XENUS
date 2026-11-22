@@ -248,6 +248,7 @@ int taskbar_app_key(int i, char *out, size_t out_size)
         case TASK_APP_SECURITY: snprintf(out, out_size, "xenus:security"); break;
         case TASK_APP_SYSTEM: snprintf(out, out_size, "xenus:system"); break;
         case TASK_APP_EDITOR: snprintf(out, out_size, "xenus:editor"); break;
+        case TASK_APP_SETTINGS: snprintf(out, out_size, "xenus:settings"); break;
         default: snprintf(out, out_size, "xenus:%d", t->app_type); break;
         }
     }
@@ -331,6 +332,9 @@ void taskbar_activate(int i)
     case TASK_APP_EDITOR:
         text_editor_show();
         break;
+    case TASK_APP_SETTINGS:
+        settings_show();
+        break;
     default:
         break;
     }
@@ -351,6 +355,7 @@ void taskbar_minimize_entry(int i)
     case TASK_APP_SECURITY: security_gui_hide(); break;
     case TASK_APP_SYSTEM: system_center_hide(); break;
     case TASK_APP_EDITOR: text_editor_hide(); break;
+    case TASK_APP_SETTINGS: settings_hide(); break;
     default: break;
     }
 }
@@ -411,6 +416,8 @@ void taskbar_quit(int i)
             system_center_close();
         } else if (types[j] == TASK_APP_EDITOR) {
             text_editor_close();
+        } else if (types[j] == TASK_APP_SETTINGS) {
+            settings_close();
         }
     }
 }
@@ -437,6 +444,9 @@ void taskbar_close(int i)
         break;
     case TASK_APP_EDITOR:
         text_editor_close();
+        break;
+    case TASK_APP_SETTINGS:
+        settings_close();
         break;
     default:
         break;

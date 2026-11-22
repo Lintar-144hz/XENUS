@@ -217,6 +217,7 @@ extern Config cfg;
 #define TASK_APP_SECURITY 2   /* built-in security center */
 #define TASK_APP_SYSTEM   3
 #define TASK_APP_EDITOR   4   /* System Center */
+#define TASK_APP_SETTINGS 5   /* standalone Settings window */
 
 typedef struct {
     Window win;
@@ -555,6 +556,21 @@ int security_gui_button(XButtonEvent *ev);
 int security_gui_motion(XMotionEvent *ev);
 void security_gui_key(XKeyEvent *ev);
 void security_gui_cleanup(void);
+
+/* ----------------------------------------------------------- settings.c */
+
+void settings_show(void);
+void settings_hide(void);
+void settings_close(void);
+void settings_toggle(void);
+int settings_open(void);
+Window settings_window(void);
+void settings_redraw(void);
+int settings_expose(XExposeEvent *ev);
+int settings_button(XButtonEvent *ev);
+int settings_motion(XMotionEvent *ev);
+void settings_key(XKeyEvent *ev);
+void settings_cleanup(void);
 
 /* ------------------------------------------------------- control_center.c */
 

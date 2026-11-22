@@ -53,7 +53,7 @@ TEST_TIMEOUT ?= 300
 SRC = src/main.c src/util.c src/ui.c src/config.c src/wm.c src/input.c \
       src/panel.c src/dock.c src/launcher.c src/apps.c src/msgbox.c src/fm.c \
       src/desktop.c src/security_gui.c src/text_editor.c src/taskbar.c src/system_center.c \
-      src/control_center.c src/notification_center.c src/auth_screen.c
+      src/settings.c src/control_center.c src/notification_center.c src/auth_screen.c
 OBJ = $(patsubst %.c,$(OBJDIR)/%.o,$(SRC))
 
 # the App API + plugin system: a static library shared by xenus and the tests
