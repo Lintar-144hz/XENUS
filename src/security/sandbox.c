@@ -1,6 +1,6 @@
 #define _GNU_SOURCE              /* unshare(), CLONE_NEW* */
 /*
- * SCDE Security Layer - runtime feature probe and process sandboxing.
+ * XENUS Security Layer - runtime feature probe and process sandboxing.
  *
  * Honest-by-design: every feature is *verified at runtime* with a forked
  * probe (seccomp must actually kill/deny, mount-ns hiding must actually
@@ -18,8 +18,8 @@
  * assumption.  Only mechanisms that verify are reported AVAILABLE.
  */
 #define _DEFAULT_SOURCE
-#include <scde/security.h>
-#include <scde/security_resource.h>
+#include <xenus/security.h>
+#include <xenus/security_resource.h>
 
 #include "security_internal.h"
 
@@ -32,9 +32,9 @@
  * <linux/filter.h> defines BPF_STMT/BPF_JUMP as brace initializers (array
  * initialisation only); these expression forms work inside emit().
  */
-#define SCDE_BPF_STMT(code, k) \
+#define XENUS_BPF_STMT(code, k) \
     ((struct sock_filter){ (unsigned short)(code), 0, 0, (unsigned)(k) })
-#define SCDE_BPF_JUMP(code, jt, jf, k)                                       \
+#define XENUS_BPF_JUMP(code, jt, jf, k)                                       \
     ((struct sock_filter){ (unsigned short)(code), (unsigned char)(jt),      \
                            (unsigned char)(jf), (unsigned)(k) })
 #include <linux/seccomp.h>
@@ -68,43 +68,43 @@
 #endif
 
 #if defined(__x86_64__)
-#define SCDE_AUDIT_ARCH_ AUDIT_ARCH_X86_64
+#define XENUS_AUDIT_ARCH_ AUDIT_ARCH_X86_64
 #elif defined(__aarch64__)
-#define SCDE_AUDIT_ARCH_ AUDIT_ARCH_AARCH64
+#define XENUS_AUDIT_ARCH_ AUDIT_ARCH_AARCH64
 #elif defined(__arm__)
-#define SCDE_AUDIT_ARCH_ AUDIT_ARCH_ARM
+#define XENUS_AUDIT_ARCH_ AUDIT_ARCH_ARM
 #elif defined(__i386__)
-#define SCDE_AUDIT_ARCH_ AUDIT_ARCH_I386
+#define XENUS_AUDIT_ARCH_ AUDIT_ARCH_I386
 #else
-#define SCDE_AUDIT_ARCH_ 0
+#define XENUS_AUDIT_ARCH_ 0
 #endif
 
 /* filter instruction cap: deny lists are small, headroom for arg checks */
 #define MAX_INSNS 128
 
-static scde_security_features_t feat;
+static xenus_security_features_t feat;
 static int feat_done;
 
 /* ------------------------------------------------------------ helpers -- */
 
-const char *scde_feature_state_name(scde_feature_state_t state)
+const char *xenus_feature_state_name(xenus_feature_state_t state)
 {
     switch (state) {
-    case SCDE_FEATURE_AVAILABLE:
+    case XENUS_FEATURE_AVAILABLE:
         return "AVAILABLE";
-    case SCDE_FEATURE_LIMITED:
+    case XENUS_FEATURE_LIMITED:
         return "LIMITED";
     default:
         return "UNAVAILABLE";
     }
 }
 
-const char *scde_sandbox_tier_name(scde_sandbox_tier_t tier)
+const char *xenus_sandbox_tier_name(xenus_sandbox_tier_t tier)
 {
     switch (tier) {
-    case SCDE_SANDBOX_FULL:
+    case XENUS_SANDBOX_FULL:
         return "full";
-    case SCDE_SANDBOX_RESTRICT:
+    case XENUS_SANDBOX_RESTRICT:
         return "restrict";
     default:
         return "none";
@@ -170,21 +170,21 @@ static int seccomp_install(const struct sock_filter *filt, unsigned int len)
 static int probe_seccomp_body(void)
 {
     struct sock_filter filt[] = {
-        SCDE_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+        XENUS_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
                  (unsigned int)offsetof(struct seccomp_data, arch)),
-        SCDE_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SCDE_AUDIT_ARCH_, 1, 0),
-        SCDE_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
-        SCDE_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+        XENUS_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, XENUS_AUDIT_ARCH_, 1, 0),
+        XENUS_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
+        XENUS_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
                  (unsigned int)offsetof(struct seccomp_data, nr)),
-        SCDE_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_getppid, 0, 1),
-        SCDE_BPF_STMT(BPF_RET | BPF_K,
+        XENUS_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_getppid, 0, 1),
+        XENUS_BPF_STMT(BPF_RET | BPF_K,
                  SECCOMP_RET_ERRNO | (EPERM & SECCOMP_RET_DATA)),
-        SCDE_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        XENUS_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
     long r;
     long p;
 
-    if (SCDE_AUDIT_ARCH_ == 0)
+    if (XENUS_AUDIT_ARCH_ == 0)
         return 1;
     if (seccomp_install(filt, sizeof(filt) / sizeof(filt[0])) != 0)
         return 2;
@@ -275,7 +275,7 @@ static void probe_features(void)
      * SIG_IGN (fire-and-forget app spawning), under which forked probe
      * children are auto-reaped and waitpid() always fails - every probe
      * would wrongly report UNAVAILABLE and fail-closed spawning would
-     * break.  Probes run once and SCDE is single-threaded, so borrow
+     * break.  Probes run once and XENUS is single-threaded, so borrow
      * SIG_DFL for the probe window; restoring SIG_IGN afterwards also
      * discards any zombie the window may have collected. */
     void (*old_chld)(int) = SIG_DFL;
@@ -290,52 +290,52 @@ static void probe_features(void)
     feat.proot = proot_detected();
 
     feat.no_new_privs = run_child(probe_nnp_body) == 0
-                            ? SCDE_FEATURE_AVAILABLE
-                            : SCDE_FEATURE_UNAVAILABLE;
+                            ? XENUS_FEATURE_AVAILABLE
+                            : XENUS_FEATURE_UNAVAILABLE;
     feat.rlimit = run_child(probe_rlimit_body) == 0
-                      ? SCDE_FEATURE_AVAILABLE
-                      : SCDE_FEATURE_UNAVAILABLE;
+                      ? XENUS_FEATURE_AVAILABLE
+                      : XENUS_FEATURE_UNAVAILABLE;
     feat.seccomp = run_child(probe_seccomp_body) == 0
-                       ? SCDE_FEATURE_AVAILABLE
-                       : SCDE_FEATURE_UNAVAILABLE;
+                       ? XENUS_FEATURE_AVAILABLE
+                       : XENUS_FEATURE_UNAVAILABLE;
     feat.fs = run_child(probe_fs_body) == 0
-                  ? SCDE_FEATURE_AVAILABLE
-                  : SCDE_FEATURE_UNAVAILABLE;
+                  ? XENUS_FEATURE_AVAILABLE
+                  : XENUS_FEATURE_UNAVAILABLE;
 
     /* honest combination labels */
-    if (feat.no_new_privs == SCDE_FEATURE_AVAILABLE &&
-        feat.rlimit == SCDE_FEATURE_AVAILABLE &&
-        feat.seccomp == SCDE_FEATURE_AVAILABLE)
-        feat.kernel_enforcement = SCDE_FEATURE_AVAILABLE;
-    else if (feat.no_new_privs == SCDE_FEATURE_AVAILABLE &&
-             feat.rlimit == SCDE_FEATURE_AVAILABLE)
-        feat.kernel_enforcement = SCDE_FEATURE_LIMITED;
+    if (feat.no_new_privs == XENUS_FEATURE_AVAILABLE &&
+        feat.rlimit == XENUS_FEATURE_AVAILABLE &&
+        feat.seccomp == XENUS_FEATURE_AVAILABLE)
+        feat.kernel_enforcement = XENUS_FEATURE_AVAILABLE;
+    else if (feat.no_new_privs == XENUS_FEATURE_AVAILABLE &&
+             feat.rlimit == XENUS_FEATURE_AVAILABLE)
+        feat.kernel_enforcement = XENUS_FEATURE_LIMITED;
     else
-        feat.kernel_enforcement = SCDE_FEATURE_UNAVAILABLE;
+        feat.kernel_enforcement = XENUS_FEATURE_UNAVAILABLE;
 
-    if (feat.seccomp == SCDE_FEATURE_UNAVAILABLE)
-        feat.sandbox = SCDE_FEATURE_UNAVAILABLE;
-    else if (feat.fs == SCDE_FEATURE_AVAILABLE)
-        feat.sandbox = SCDE_FEATURE_AVAILABLE;
+    if (feat.seccomp == XENUS_FEATURE_UNAVAILABLE)
+        feat.sandbox = XENUS_FEATURE_UNAVAILABLE;
+    else if (feat.fs == XENUS_FEATURE_AVAILABLE)
+        feat.sandbox = XENUS_FEATURE_AVAILABLE;
     else
-        feat.sandbox = SCDE_FEATURE_LIMITED;
+        feat.sandbox = XENUS_FEATURE_LIMITED;
 
     feat.scanner_active =
-        scde_security_get_scan_mode() != SCDE_SCAN_OFF;
+        xenus_security_get_scan_mode() != XENUS_SCAN_OFF;
     feat.policy_active = 1;             /* policy gate is always compiled in */
     feat_done = 1;
     if (borrowed)
         signal(SIGCHLD, old_chld);
 }
 
-int scde_security_features(scde_security_features_t *out)
+int xenus_security_features(xenus_security_features_t *out)
 {
     if (!out)
-        return SCDE_ERR_ARG;
-    scde__ensure();
+        return XENUS_ERR_ARG;
+    xenus__ensure();
     probe_features();
     *out = feat;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 /* --------------------------------------------------------- seccomp BPF -- */
@@ -353,19 +353,19 @@ static void emit(prog_t *p, struct sock_filter in)
 
 static void emit_arch_check(prog_t *p)
 {
-    emit(p, SCDE_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+    emit(p, XENUS_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
                      (unsigned int)offsetof(struct seccomp_data, arch)));
-    emit(p, SCDE_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SCDE_AUDIT_ARCH_, 1, 0));
-    emit(p, SCDE_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS));
-    emit(p, SCDE_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+    emit(p, XENUS_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, XENUS_AUDIT_ARCH_, 1, 0));
+    emit(p, XENUS_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS));
+    emit(p, XENUS_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
                      (unsigned int)offsetof(struct seccomp_data, nr)));
 }
 
 /* JEQ nr -> ERRNO(EPERM): match executes the RET, non-match skips it. */
 static void emit_deny_nr(prog_t *p, int nr)
 {
-    emit(p, SCDE_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (unsigned int)nr, 0, 1));
-    emit(p, SCDE_BPF_STMT(BPF_RET | BPF_K,
+    emit(p, XENUS_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (unsigned int)nr, 0, 1));
+    emit(p, XENUS_BPF_STMT(BPF_RET | BPF_K,
                      SECCOMP_RET_ERRNO | (EPERM & SECCOMP_RET_DATA)));
 }
 
@@ -381,13 +381,13 @@ static void emit_deny_nr(prog_t *p, int nr)
  */
 static void emit_deny_nonunix_socket(prog_t *p)
 {
-    emit(p, SCDE_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 2, 0));
-    emit(p, SCDE_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketpair, 1, 0));
-    emit(p, SCDE_BPF_STMT(BPF_JMP | BPF_JA | BPF_K, 3));
-    emit(p, SCDE_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+    emit(p, XENUS_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 2, 0));
+    emit(p, XENUS_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketpair, 1, 0));
+    emit(p, XENUS_BPF_STMT(BPF_JMP | BPF_JA | BPF_K, 3));
+    emit(p, XENUS_BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
                      (unsigned int)offsetof(struct seccomp_data, args[0])));
-    emit(p, SCDE_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 1, 0));
-    emit(p, SCDE_BPF_STMT(BPF_RET | BPF_K,
+    emit(p, XENUS_BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 1, 0));
+    emit(p, XENUS_BPF_STMT(BPF_RET | BPF_K,
                      SECCOMP_RET_ERRNO | (EPERM & SECCOMP_RET_DATA)));
 }
 
@@ -490,7 +490,7 @@ static int install_filter(int full)
     prog_t p;
 
     memset(&p, 0, sizeof(p));
-    if (SCDE_AUDIT_ARCH_ == 0)
+    if (XENUS_AUDIT_ARCH_ == 0)
         return -1;
     emit_arch_check(&p);
 
@@ -530,7 +530,7 @@ static int install_filter(int full)
 
     emit_admin_denies(&p);
 
-    emit(&p, SCDE_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+    emit(&p, XENUS_BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
     if (p.n > MAX_INSNS)
         return -1;
     return seccomp_install(p.insns, p.n);
@@ -562,8 +562,8 @@ static int mount_tmpfs_over(const char *dir)
     return 0;
 }
 
-static char staged_xauth[SCDE_PATH_MAX];
-static char xauth_dest[SCDE_PATH_MAX];
+static char staged_xauth[XENUS_PATH_MAX];
+static char xauth_dest[XENUS_PATH_MAX];
 
 /*
  * X11 cookie preservation: copy (not bind) the authority file before the
@@ -630,7 +630,7 @@ static void stage_xauth(void)
              (int)(sizeof(xauth_dest) - 1), xa);
     /* mkstemp creates the staging file atomically (O_EXCL, 0600): a
        pre-planted symlink or regular file can never hijack the copy */
-    snprintf(tmpl, sizeof(tmpl), "/tmp/.scde-xauth-XXXXXX");
+    snprintf(tmpl, sizeof(tmpl), "/tmp/.xenus-xauth-XXXXXX");
     tmpfd = mkstemp(tmpl);
     if (tmpfd < 0)
         return;
@@ -645,7 +645,7 @@ static void stage_xauth(void)
 
 static void make_parents(const char *path)
 {
-    char buf[SCDE_PATH_MAX];
+    char buf[XENUS_PATH_MAX];
     char *p;
 
     snprintf(buf, sizeof(buf), "%.*s", (int)(sizeof(buf) - 1), path);
@@ -697,12 +697,12 @@ static int hide_sensitive_paths(void)
 /* Absolute ceiling for any sandbox: 3 GiB per sandboxed process
  * (3072 MiB).  A configured value above this is clamped down to it,
  * never raised past it; a zero (unset) ceiling fails closed below. */
-#define SCDE_SANDBOX_RAM_CAP_BYTES (3072ULL * 1024ULL * 1024ULL)
+#define XENUS_SANDBOX_RAM_CAP_BYTES (3072ULL * 1024ULL * 1024ULL)
 
 static int apply_rlimits(int full)
 {
     struct rlimit rl;
-    scde_resource_limits_t res;
+    xenus_resource_limits_t res;
 
     rl.rlim_cur = 0;
     rl.rlim_max = 0;
@@ -723,7 +723,7 @@ static int apply_rlimits(int full)
     setrlimit(RLIMIT_FSIZE, &rl);
 
     /* Resource ceiling - shared with the resource module (one source of
-     * truth: scde_resource_defaults/set, wired to sandbox_memory_mb).
+     * truth: xenus_resource_defaults/set, wired to sandbox_memory_mb).
      * Scope: per sandboxed process (RLIMIT_DATA), enforced by the kernel in
      * the child before exec.  RLIMIT_DATA tracks committed data/anon
      * mappings; RLIMIT_AS would also count the enormous PROT_NONE address
@@ -732,16 +732,16 @@ static int apply_rlimits(int full)
      * failure here fails the sandbox closed - we never claim a ceiling we
      * did not apply.
      *
-     * No CPU quota: SCDE deliberately imposes none.  Sandboxed
+     * No CPU quota: XENUS deliberately imposes none.  Sandboxed
      * applications use whatever CPU the host scheduler gives them. */
-    scde_resource_get(&res);
+    xenus_resource_get(&res);
     if (res.ram_bytes > 0) {
         rlim_t cap = (rlim_t)res.ram_bytes;
 #ifdef RLIMIT_DATA
         struct rlimit data;
 
-        if (cap > (rlim_t)SCDE_SANDBOX_RAM_CAP_BYTES)
-            cap = (rlim_t)SCDE_SANDBOX_RAM_CAP_BYTES;
+        if (cap > (rlim_t)XENUS_SANDBOX_RAM_CAP_BYTES)
+            cap = (rlim_t)XENUS_SANDBOX_RAM_CAP_BYTES;
         if (getrlimit(RLIMIT_DATA, &data) != 0)
             return -1;
         if (data.rlim_max == RLIM_INFINITY || data.rlim_max > cap)
@@ -752,8 +752,8 @@ static int apply_rlimits(int full)
 #elif defined(RLIMIT_AS)
         struct rlimit as;
 
-        if (cap > (rlim_t)SCDE_SANDBOX_RAM_CAP_BYTES)
-            cap = (rlim_t)SCDE_SANDBOX_RAM_CAP_BYTES;
+        if (cap > (rlim_t)XENUS_SANDBOX_RAM_CAP_BYTES)
+            cap = (rlim_t)XENUS_SANDBOX_RAM_CAP_BYTES;
         if (getrlimit(RLIMIT_AS, &as) != 0)
             return -1;
         if (as.rlim_max == RLIM_INFINITY || as.rlim_max > cap)
@@ -770,44 +770,44 @@ static int apply_rlimits(int full)
     return 0;
 }
 
-int scde_sandbox_apply(scde_sandbox_tier_t tier)
+int xenus_sandbox_apply(xenus_sandbox_tier_t tier)
 {
-    scde_security_features_t f;
+    xenus_security_features_t f;
 
-    if (tier == SCDE_SANDBOX_NONE)
-        return SCDE_OK;
-    if (tier != SCDE_SANDBOX_RESTRICT && tier != SCDE_SANDBOX_FULL)
-        return SCDE_ERR_ARG;
+    if (tier == XENUS_SANDBOX_NONE)
+        return XENUS_OK;
+    if (tier != XENUS_SANDBOX_RESTRICT && tier != XENUS_SANDBOX_FULL)
+        return XENUS_ERR_ARG;
 
-    scde_security_features(&f);
+    xenus_security_features(&f);
 
     /* no_new_privs is the baseline for every restricted tier */
-    if (f.no_new_privs != SCDE_FEATURE_AVAILABLE)
-        return SCDE_ERR;
+    if (f.no_new_privs != XENUS_FEATURE_AVAILABLE)
+        return XENUS_ERR;
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0)
-        return SCDE_ERR;
+        return XENUS_ERR;
     /* resource ceiling is load-bearing: fail closed when it cannot hold */
-    if (apply_rlimits(tier == SCDE_SANDBOX_FULL) != 0)
-        return SCDE_ERR;
+    if (apply_rlimits(tier == XENUS_SANDBOX_FULL) != 0)
+        return XENUS_ERR;
 
-    if (tier == SCDE_SANDBOX_FULL) {
+    if (tier == XENUS_SANDBOX_FULL) {
         /* seccomp is REQUIRED for the sandbox tier: fail closed */
-        if (f.seccomp != SCDE_FEATURE_AVAILABLE)
-            return SCDE_ERR;
+        if (f.seccomp != XENUS_FEATURE_AVAILABLE)
+            return XENUS_ERR;
         /* filesystem hiding first: seccomp then blocks ns churn */
-        if (f.fs == SCDE_FEATURE_AVAILABLE) {
+        if (f.fs == XENUS_FEATURE_AVAILABLE) {
             if (hide_sensitive_paths() != 0)
-                return SCDE_ERR;
+                return XENUS_ERR;
         }
         if (install_filter(1) != 0)
-            return SCDE_ERR;
-        return SCDE_OK;
+            return XENUS_ERR;
+        return XENUS_OK;
     }
 
     /* RESTRICT: seccomp is defence-in-depth; nnp+rlimits already applied */
-    if (f.seccomp == SCDE_FEATURE_AVAILABLE) {
+    if (f.seccomp == XENUS_FEATURE_AVAILABLE) {
         if (install_filter(0) != 0)
-            return SCDE_ERR;
+            return XENUS_ERR;
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }

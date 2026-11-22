@@ -1,4 +1,4 @@
-#include "scde.h"
+#include "xenus.h"
 
 #include <dlfcn.h>
 #include <stdio.h>
@@ -9,6 +9,9 @@
 #define UI_GREEN        0x28c840UL
 #define UI_YELLOW       0xfebc2eUL
 #define UI_RED          0xff5f57UL
+
+static unsigned long g_accent = UI_ACCENT;
+static unsigned long g_accent_soft = UI_ACCENT_SOFT;
 
 typedef Bool (*UiShapeQueryFn)(Display *, int *, int *);
 typedef void (*UiShapeMaskFn)(Display *, Window, int, int, int, Pixmap, int);
@@ -254,11 +257,25 @@ unsigned long ui_wallpaper_color(int y)
     return (unsigned long)r << 16 | (unsigned long)g << 8 | (unsigned long)b;
 }
 
-unsigned long ui_accent(void) { return UI_ACCENT; }
-unsigned long ui_accent_soft(void) { return UI_ACCENT_SOFT; }
+unsigned long ui_accent(void) { return g_accent; }
+unsigned long ui_accent_soft(void) { return g_accent_soft; }
 unsigned long ui_green(void) { return UI_GREEN; }
 unsigned long ui_yellow(void) { return UI_YELLOW; }
 unsigned long ui_red(void) { return UI_RED; }
+
+void ui_set_accent(int accent)
+{
+    if (accent == 1) {
+        g_accent = 0xc7c9d1UL;
+        g_accent_soft = 0xa9adb8UL;
+    } else if (accent == 2) {
+        g_accent = 0x8e8e93UL;
+        g_accent_soft = 0x6f7078UL;
+    } else {
+        g_accent = UI_ACCENT;
+        g_accent_soft = UI_ACCENT_SOFT;
+    }
+}
 
 static void round_draw(Display *dpy, Drawable d, GC gc, int x, int y,
                        int wd, int hg, int r, unsigned long color)
@@ -591,15 +608,22 @@ void ui_draw_app_icon(Window w, int kind, int x, int y, int size, int dim,
         return;
     }
     if (kind == UI_ICON_TERMINAL) {
-        unsigned long base = dim ? 0x2a2a2fUL : 0x2c2c30UL;
+        unsigned long base = dim ? 0x242428UL : 0x1e1e22UL;
 
         ui_round_fill_gradient(w, x, y, size, size, size / 4,
-                               ui_mix(base, 0xffffffUL, 10), base);
-        XSetForeground(sc.dpy, sc.gc, 0x3c3c42UL);
-        XFillRectangle(sc.dpy, w, sc.gc, x + size / 5, y + size / 4,
-                       (unsigned)(size * 3 / 5), (unsigned)(size / 18));
-        XSetForeground(sc.dpy, sc.gc, 0x30d158UL);
-        draw_text_mono(w, x + size / 5, y + size * 3 / 5,
+                               ui_mix(base, 0xffffffUL, 16), base);
+        ui_round_outline(w, x, y, size, size, size / 4,
+                         dim ? 0x34343aUL : 0x55555dUL);
+        XSetForeground(sc.dpy, sc.gc, 0xff5f57UL);
+        XFillArc(sc.dpy, w, sc.gc, x + size / 6, y + size / 5, 3, 3,
+                 0, 360 * 64);
+        XSetForeground(sc.dpy, sc.gc, 0xfebc2eUL);
+        XFillArc(sc.dpy, w, sc.gc, x + size * 2 / 5, y + size / 5, 3, 3,
+                 0, 360 * 64);
+        XSetForeground(sc.dpy, sc.gc, 0x28c840UL);
+        XFillArc(sc.dpy, w, sc.gc, x + size * 38 / 60, y + size / 5, 3, 3,
+                 0, 360 * 64);
+        draw_text_mono(w, x + size / 5, y + size * 7 / 10,
                        dim ? 0x7a7a80UL : 0x30d158UL, ">_");
         return;
     }
@@ -969,4 +993,144 @@ void ui_draw_drive_icon(Window w, int x, int cy, int size, unsigned long fg)
               x + size - 3, cy + size / 12);
     XFillRectangle(sc.dpy, w, sc.gc, x + size - size / 4,
                    cy + size / 5, 2, 2);
+}
+
+void ui_draw_sliders(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+    int i;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    for (i = 0; i < 3; i++) {
+        int y = cy - r + (size * 2 / 3) * i / 2;
+        int kx = cx - r + (size * (i == 1 ? 2 : 1)) / 3;
+
+        XDrawLine(sc.dpy, w, sc.gc, cx - r, y, cx + r, y);
+        XFillArc(sc.dpy, w, sc.gc, kx - 2, y - 2, 5, 5, 0, 360 * 64);
+    }
+}
+
+void ui_draw_bell(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    XDrawArc(sc.dpy, w, sc.gc, cx - r, cy - r, (unsigned)(2 * r),
+             (unsigned)(2 * r), 0, 180 * 64);
+    XDrawLine(sc.dpy, w, sc.gc, cx - r, cy, cx - r, cy + r / 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx + r, cy, cx + r, cy + r / 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx - r - 1, cy + r / 2,
+              cx + r + 1, cy + r / 2);
+    XFillRectangle(sc.dpy, w, sc.gc, cx - 1, cy + r / 2 + 1, 3, 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx, cy - r - 2, cx, cy - r);
+}
+
+void ui_draw_bluetooth(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    XDrawLine(sc.dpy, w, sc.gc, cx, cy - r, cx, cy + r);
+    XDrawLine(sc.dpy, w, sc.gc, cx, cy - r, cx + r / 2, cy - r / 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx + r / 2, cy - r / 2, cx - r / 2, cy + r / 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx, cy + r, cx + r / 2, cy + r / 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx + r / 2, cy + r / 2, cx - r / 2, cy - r / 2);
+}
+
+void ui_draw_airplane(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    XDrawLine(sc.dpy, w, sc.gc, cx - r, cy, cx + r, cy);
+    XDrawLine(sc.dpy, w, sc.gc, cx, cy - r, cx, cy + r / 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx - r / 2, cy + r / 2,
+              cx + r / 2, cy + r / 2);
+    XDrawLine(sc.dpy, w, sc.gc, cx - r / 2, cy - r / 2,
+              cx, cy - r / 3);
+    XDrawLine(sc.dpy, w, sc.gc, cx + r / 2, cy - r / 2,
+              cx, cy - r / 3);
+}
+
+void ui_draw_moon(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    XDrawArc(sc.dpy, w, sc.gc, cx - r, cy - r, (unsigned)(2 * r),
+             (unsigned)(2 * r), 60 * 64, 220 * 64);
+    XDrawArc(sc.dpy, w, sc.gc, cx - r / 2, cy - r, (unsigned)(2 * r),
+             (unsigned)(2 * r), 100 * 64, 180 * 64);
+}
+
+void ui_draw_sun(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+    int i;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    XDrawArc(sc.dpy, w, sc.gc, cx - r / 2, cy - r / 2, (unsigned)r,
+             (unsigned)r, 0, 360 * 64);
+    for (i = 0; i < 8; i++) {
+        static const int dx[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+        static const int dy[8] = { -1, -1, 0, 1, 1, 1, 0, -1 };
+        int x0 = cx + dx[i] * (r / 2 + 1);
+        int y0 = cy + dy[i] * (r / 2 + 1);
+        int x1 = cx + dx[i] * r;
+        int y1 = cy + dy[i] * r;
+
+        XDrawLine(sc.dpy, w, sc.gc, x0, y0, x1, y1);
+    }
+}
+
+void ui_draw_speaker(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+    XPoint pts[6];
+
+    pts[0].x = cx - r;       pts[0].y = cy - r / 3;
+    pts[1].x = cx - r / 2;   pts[1].y = cy - r / 3;
+    pts[2].x = cx;           pts[2].y = cy - r;
+    pts[3].x = cx;           pts[3].y = cy + r;
+    pts[4].x = cx - r / 2;   pts[4].y = cy + r / 3;
+    pts[5].x = cx - r;       pts[5].y = cy + r / 3;
+    XSetForeground(sc.dpy, sc.gc, fg);
+    XFillPolygon(sc.dpy, w, sc.gc, pts, 6, Convex, CoordModeOrigin);
+    XDrawArc(sc.dpy, w, sc.gc, cx - r / 2, cy - r / 2, (unsigned)r,
+             (unsigned)r, -50 * 64, 100 * 64);
+    XDrawArc(sc.dpy, w, sc.gc, cx - r, cy - r, (unsigned)(2 * r),
+             (unsigned)(2 * r), -45 * 64, 90 * 64);
+}
+
+void ui_draw_cpu(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+    int i;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    ui_round_outline(w, cx - r, cy - r, size, size, 3, fg);
+    ui_round_outline(w, cx - r / 3, cy - r / 3, size / 3, size / 3, 2, fg);
+    for (i = 1; i < 4; i++) {
+        int p = cx - r + size * i / 4;
+
+        XDrawLine(sc.dpy, w, sc.gc, p, cy - r - 2, p, cy - r);
+        XDrawLine(sc.dpy, w, sc.gc, p, cy + r, p, cy + r + 2);
+        XDrawLine(sc.dpy, w, sc.gc, cx - r - 2, p, cx - r, p);
+        XDrawLine(sc.dpy, w, sc.gc, cx + r, p, cx + r + 2, p);
+    }
+}
+
+void ui_draw_chip(Window w, int cx, int cy, int size, unsigned long fg)
+{
+    int r = size / 2;
+    int i;
+
+    XSetForeground(sc.dpy, sc.gc, fg);
+    ui_round_outline(w, cx - r, cy - r, size, size, 3, fg);
+    for (i = 0; i < 3; i++) {
+        int p = cx - r + size * (i + 1) / 4;
+
+        XDrawLine(sc.dpy, w, sc.gc, p, cy - r, p, cy + r);
+    }
+    XDrawLine(sc.dpy, w, sc.gc, cx - r, cy, cx + r, cy);
 }

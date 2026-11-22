@@ -1,9 +1,9 @@
 /*
- * SCDE - utility helpers
+ * XENUS - utility helpers
  */
-#include "scde.h"
+#include "xenus.h"
 
-#include <scde/security.h>
+#include <xenus/security.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -14,7 +14,42 @@
 #include <sys/types.h>
 
 /* internal: subject of the most recent security exec gate (core.c) */
-const char *scde__last_exec_subject(void);
+const char *xenus__last_exec_subject(void);
+
+static int coalescible_event(const XEvent *a, const XEvent *b)
+{
+    if (a->type != b->type)
+        return 0;
+    switch (a->type) {
+    case MotionNotify:
+        return a->xmotion.window == b->xmotion.window;
+    case Expose:
+        return a->xexpose.window == b->xexpose.window;
+    case ConfigureNotify:
+        return a->xconfigure.window == b->xconfigure.window;
+    default:
+        return 0;
+    }
+}
+
+int event_next_coalesced(XEvent *ev)
+{
+    XEvent next;
+    int merged = 0;
+
+    XNextEvent(sc.dpy, ev);
+    while (merged < 32 && XEventsQueued(sc.dpy, QueuedAlready) > 0) {
+        XPeekEvent(sc.dpy, &next);
+        if (!coalescible_event(ev, &next))
+            break;
+        XNextEvent(sc.dpy, &next);
+        *ev = next;
+        merged++;
+    }
+    if (ev->type == Expose && merged > 0)
+        ev->xexpose.count = 0;
+    return merged;
+}
 
 /*
  * Publish the window that owns the X input focus on the root window.  A
@@ -60,7 +95,7 @@ void log_msg(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    fputs("[scde] ", stderr);
+    fputs("[xenus] ", stderr);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);
@@ -70,18 +105,55 @@ void die(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    fputs("[scde] fatal: ", stderr);
+    fputs("[xenus] fatal: ", stderr);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);
     exit(1);
 }
 
+
+/* Apply XENUS terminal colors only to xterm and uxterm commands. */
+static const char *spawn_xterm_theme(const char *cmd,
+                                     char *out, size_t size)
+{
+    const char *p = cmd, *end, *base, *q;
+    int n;
+    size_t len;
+
+    while (*p == ' ' || *p == '\t')
+        p++;
+
+    end = p;
+    while (*end && *end != ' ' && *end != '\t')
+        end++;
+
+    base = p;
+    for (q = p; q < end; q++)
+        if (*q == '/')
+            base = q + 1;
+
+    len = (size_t)(end - base);
+    if (!((len == 5 && strncmp(base, "xterm", 5) == 0) ||
+          (len == 6 && strncmp(base, "uxterm", 6) == 0)))
+        return cmd;
+
+    n = snprintf(out, size,
+                 "%.*s -bg '#101010' -fg '#f2f2f2' "
+                 "-cr '#30d158'%s",
+                 (int)(end - cmd), cmd, end);
+
+    if (n < 0 || (size_t)n >= size)
+        return cmd;
+
+    return out;
+}
+
 /*
  * Run a command through /bin/sh in its own session.  The X connection fd and
  * the instance lock fd are closed in the child so it never inherits them.
  *
- * Every command first passes the SCDE security policy gate (resolve ->
+ * Every command first passes the XENUS security policy gate (resolve ->
  * scan -> trust -> decide, fail-closed).  DENY is refused here and audited.
  * RESTRICT/SANDBOX children apply their restrictions before exec and
  * acknowledge them over a CLOEXEC pipe; without a verified ack the parent
@@ -89,26 +161,30 @@ void die(const char *fmt, ...)
  */
 void spawn(const char *cmd)
 {
+    char themed_cmd[4096];
+    const char *run_cmd;
     pid_t pid;
-    scde_decision_t dec = SCDE_DECIDE_DENY;
+    xenus_decision_t dec = XENUS_DECIDE_DENY;
     int pfd[2] = { -1, -1 };
     const char *subject;
 
     if (!cmd || !*cmd)
         return;
 
+    run_cmd = spawn_xterm_theme(cmd, themed_cmd, sizeof(themed_cmd));
+
     /* policy gate: logs DENY / POLICY_FALLBACK / FEATURE_UNAVAILABLE */
-    if (scde_security_gate_exec(cmd, &dec) != SCDE_OK)
-        dec = SCDE_DECIDE_DENY;
-    subject = scde__last_exec_subject();
-    if (dec == SCDE_DECIDE_DENY) {
+    if (xenus_security_gate_exec(run_cmd, &dec) != XENUS_OK)
+        dec = XENUS_DECIDE_DENY;
+    subject = xenus__last_exec_subject();
+    if (dec == XENUS_DECIDE_DENY) {
         log_msg("spawn: blocked by security policy (%s)", subject);
         return;
     }
 
-    if (dec != SCDE_DECIDE_ALLOW && pipe(pfd) != 0) {
+    if (dec != XENUS_DECIDE_ALLOW && pipe(pfd) != 0) {
         /* fail-closed: no verified channel for restrictions -> no run */
-        scde_audit_log(SCDE_AUDIT_SANDBOX_FAILED, subject, 80,
+        xenus_audit_log(XENUS_AUDIT_SANDBOX_FAILED, subject, 80,
                        "cannot establish restriction channel");
         log_msg("spawn: cannot restrict (%s)", subject);
         return;
@@ -134,14 +210,14 @@ void spawn(const char *cmd)
         n = read(pfd[0], &ack, 1);
         close(pfd[0]);
         if (n == 1 && ack == 'O') {
-            if (dec == SCDE_DECIDE_SANDBOX)
-                scde_audit_log(SCDE_AUDIT_SANDBOX_CREATED, subject, 0,
+            if (dec == XENUS_DECIDE_SANDBOX)
+                xenus_audit_log(XENUS_AUDIT_SANDBOX_CREATED, subject, 0,
                                "sandbox verified");
             else
-                scde_audit_log(SCDE_AUDIT_PROCESS_RESTRICTED, subject, 0,
+                xenus_audit_log(XENUS_AUDIT_PROCESS_RESTRICTED, subject, 0,
                                "restrictions verified");
         } else {
-            scde_audit_log(SCDE_AUDIT_SANDBOX_FAILED, subject, 80,
+            xenus_audit_log(XENUS_AUDIT_SANDBOX_FAILED, subject, 80,
                            "child failed to apply restrictions");
             log_msg("spawn: restriction failed (%s)", subject);
         }
@@ -157,13 +233,13 @@ void spawn(const char *cmd)
     if (pfd[0] >= 0)
         close(pfd[0]);
 
-    if (dec != SCDE_DECIDE_ALLOW) {
-        scde_sandbox_tier_t tier =
-            (dec == SCDE_DECIDE_SANDBOX) ? SCDE_SANDBOX_FULL
-                                         : SCDE_SANDBOX_RESTRICT;
+    if (dec != XENUS_DECIDE_ALLOW) {
+        xenus_sandbox_tier_t tier =
+            (dec == XENUS_DECIDE_SANDBOX) ? XENUS_SANDBOX_FULL
+                                         : XENUS_SANDBOX_RESTRICT;
         char ack = 'F';
 
-        if (scde_sandbox_apply(tier) == SCDE_OK)
+        if (xenus_sandbox_apply(tier) == XENUS_OK)
             ack = 'O';
         if (pfd[1] >= 0) {
             (void)!write(pfd[1], &ack, 1);
@@ -183,7 +259,7 @@ void spawn(const char *cmd)
                 close(fd);
         }
     }
-    execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+    execl("/bin/sh", "sh", "-c", run_cmd, (char *)NULL);
     _exit(127);
 }
 
@@ -369,7 +445,7 @@ void draw_text_clip(Window w, int x, int max_x, int baseline_y,
 }
 
 /*
- * SCDE Harbor app mark: a calm rounded-square window with a quiet title
+ * XENUS Harbor app mark: a calm rounded-square window with a quiet title
  * strip.  Used for the title bar icon and the task bar buttons so a
  * window always shows an icon without needing X icon hints from the
  * client.  Corners are cut by 2 px (no compositor needed) for a soft,

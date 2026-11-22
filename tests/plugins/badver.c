@@ -2,12 +2,12 @@
  * Test plugin: reports an impossible required API version (99.0) so the
  * host must reject it during validation, before init() is ever called.
  */
-#include <scde/app.h>
-#include <scde/plugin.h>
+#include <xenus/app.h>
+#include <xenus/plugin.h>
 
-static const scde_plugin_info_t plugin_info = {
-    .info_size = sizeof(scde_plugin_info_t),
-    .abi_version = SCDE_PLUGIN_ABI_VERSION,
+static const xenus_plugin_info_t plugin_info = {
+    .info_size = sizeof(xenus_plugin_info_t),
+    .abi_version = XENUS_PLUGIN_ABI_VERSION,
     .name = "badver",
     .version = "9.9.9",
     .description = "Requires a future API version",
@@ -15,17 +15,17 @@ static const scde_plugin_info_t plugin_info = {
     .api_minor = 0
 };
 
-SCDE_PLUGIN_EXPORT const scde_plugin_info_t *scde_plugin_info(void)
+XENUS_PLUGIN_EXPORT const xenus_plugin_info_t *xenus_plugin_info(void)
 {
     return &plugin_info;
 }
 
-SCDE_PLUGIN_EXPORT int scde_plugin_init(const scde_api_t *api)
+XENUS_PLUGIN_EXPORT int xenus_plugin_init(const xenus_api_t *api)
 {
     (void)api;
     return 0;                      /* never reached: version check fails */
 }
 
-SCDE_PLUGIN_EXPORT void scde_plugin_shutdown(void)
+XENUS_PLUGIN_EXPORT void xenus_plugin_shutdown(void)
 {
 }

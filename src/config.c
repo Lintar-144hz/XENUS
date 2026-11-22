@@ -1,9 +1,9 @@
 /*
- * SCDE - configuration  (~/.config/scde/config)
+ * XENUS - configuration  (~/.config/xenus/config)
  *
  * Format:  key=value     lines starting with '#' are comments
  */
-#include "scde.h"
+#include "xenus.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +20,9 @@ void config_defaults(Config *c)
     c->border_width = 1;
     c->title_height = 28;
     c->sandbox_memory_mb = 3072;        /* sandbox RAM ceiling (MiB) */
+    c->theme = 0;                       /* dark */
+    c->accent = 0;                      /* system blue */
+    c->animations = 1;
     c->focus_follows_mouse = 1;
     c->show_clock = 1;
     c->show_tray = 1;
@@ -31,7 +34,7 @@ void config_defaults(Config *c)
     str_copy(c->browser, sizeof(c->browser), "");
     c->font[0] = '\0';
 
-    /* SCDE Harbor palette: dark charcoal, soft white, calm blue-grey.
+    /* XENUS Harbor palette: dark charcoal, soft white, calm blue-grey.
        Quiet surfaces, one restrained accent, no neon. */
     str_copy(c->s_background, sizeof(c->s_background), "#0b0c10");
     str_copy(c->s_wallpaper_top, sizeof(c->s_wallpaper_top), "#222b46");
@@ -137,6 +140,17 @@ int config_load(Config *c, const char *path)
             c->border_width = to_int(val, 0, 8, c->border_width);
         else if (strcmp(key, "focus_follows_mouse") == 0)
             c->focus_follows_mouse = to_int(val, 0, 1, 1);
+        else if (strcmp(key, "theme") == 0)
+            c->theme = strcmp(val, "light") == 0 ? 1 : 0;
+        else if (strcmp(key, "accent") == 0) {
+            if (strcmp(val, "silver") == 0)
+                c->accent = 1;
+            else if (strcmp(val, "graphite") == 0)
+                c->accent = 2;
+            else
+                c->accent = to_int(val, 0, 2, 0);
+        } else if (strcmp(key, "animations") == 0)
+            c->animations = to_int(val, 0, 1, 1);
         else if (strcmp(key, "show_clock") == 0)
             c->show_clock = to_int(val, 0, 1, 1);
         else if (strcmp(key, "title_height") == 0)
@@ -253,6 +267,15 @@ void config_add_defaults_menu(Config *c)
     str_copy(c->menu[n].label, sizeof(c->menu[n].label), "Web Browser");
     str_copy(c->menu[n].cmd, sizeof(c->menu[n].cmd), "@browser");
     n++;
+    str_copy(c->menu[n].label, sizeof(c->menu[n].label), "Control Panel");
+    str_copy(c->menu[n].cmd, sizeof(c->menu[n].cmd), "@control-settings");
+    n++;
+    str_copy(c->menu[n].label, sizeof(c->menu[n].label), "System Center");
+    str_copy(c->menu[n].cmd, sizeof(c->menu[n].cmd), "@system");
+    n++;
+    str_copy(c->menu[n].label, sizeof(c->menu[n].label), "Notifications");
+    str_copy(c->menu[n].cmd, sizeof(c->menu[n].cmd), "@notifications");
+    n++;
     c->menu_count = n;
 }
 
@@ -293,6 +316,120 @@ int config_set_wallpaper(const char *path)
     }
     if (!replaced)
         fprintf(out, "wallpaper=%s\n", path);
+    fclose(out);
+    if (rename(tmp, cfg.config_path) != 0) {
+        unlink(tmp);
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * Apply a complete, coherent palette.  The dark palette is the original
+ * Harbor set; the light palette keeps the same charcoal/silver discipline
+ * with paper surfaces.  Explicit colours in the config are replaced when
+ * the user switches theme, which is exactly what the Control Panel offers.
+ */
+void config_apply_theme(Config *c, int light)
+{
+    c->theme = light ? 1 : 0;
+    if (!light) {
+        str_copy(c->s_background, sizeof(c->s_background), "#0b0c10");
+        str_copy(c->s_wallpaper_top, sizeof(c->s_wallpaper_top), "#222b46");
+        str_copy(c->s_wallpaper_bottom, sizeof(c->s_wallpaper_bottom),
+                 "#08090e");
+        str_copy(c->s_border_focus, sizeof(c->s_border_focus), "#3c3d46");
+        str_copy(c->s_border_unfocus, sizeof(c->s_border_unfocus), "#2a2b31");
+        str_copy(c->s_title_bg, sizeof(c->s_title_bg), "#303138");
+        str_copy(c->s_title_bg_inactive, sizeof(c->s_title_bg_inactive),
+                 "#26272d");
+        str_copy(c->s_title_fg, sizeof(c->s_title_fg), "#f5f5f7");
+        str_copy(c->s_title_fg_inactive, sizeof(c->s_title_fg_inactive),
+                 "#9a9aa2");
+        str_copy(c->s_title_hover, sizeof(c->s_title_hover), "#3a3b43");
+        str_copy(c->s_close_hover, sizeof(c->s_close_hover), "#e0443e");
+        str_copy(c->s_panel_bg, sizeof(c->s_panel_bg), "#24252c");
+        str_copy(c->s_panel_fg, sizeof(c->s_panel_fg), "#f5f5f7");
+        str_copy(c->s_btn_active, sizeof(c->s_btn_active), "#3a3b43");
+        str_copy(c->s_btn_inactive, sizeof(c->s_btn_inactive), "#2b2c32");
+        str_copy(c->s_btn_hover, sizeof(c->s_btn_hover), "#34353c");
+        str_copy(c->s_menu_bg, sizeof(c->s_menu_bg), "#24252c");
+        str_copy(c->s_menu_fg, sizeof(c->s_menu_fg), "#f2f2f7");
+    } else {
+        str_copy(c->s_background, sizeof(c->s_background), "#ececef");
+        str_copy(c->s_wallpaper_top, sizeof(c->s_wallpaper_top), "#f7f8fa");
+        str_copy(c->s_wallpaper_bottom, sizeof(c->s_wallpaper_bottom),
+                 "#d9dde5");
+        str_copy(c->s_border_focus, sizeof(c->s_border_focus), "#b8bcc6");
+        str_copy(c->s_border_unfocus, sizeof(c->s_border_unfocus),
+                 "#d2d5dc");
+        str_copy(c->s_title_bg, sizeof(c->s_title_bg), "#f2f3f5");
+        str_copy(c->s_title_bg_inactive, sizeof(c->s_title_bg_inactive),
+                 "#e6e7ea");
+        str_copy(c->s_title_fg, sizeof(c->s_title_fg), "#1c1c1e");
+        str_copy(c->s_title_fg_inactive, sizeof(c->s_title_fg_inactive),
+                 "#6e6e73");
+        str_copy(c->s_title_hover, sizeof(c->s_title_hover), "#e4e5e9");
+        str_copy(c->s_close_hover, sizeof(c->s_close_hover), "#e0443e");
+        str_copy(c->s_panel_bg, sizeof(c->s_panel_bg), "#f4f5f7");
+        str_copy(c->s_panel_fg, sizeof(c->s_panel_fg), "#1c1c1e");
+        str_copy(c->s_btn_active, sizeof(c->s_btn_active), "#dfe2e8");
+        str_copy(c->s_btn_inactive, sizeof(c->s_btn_inactive), "#eceef1");
+        str_copy(c->s_btn_hover, sizeof(c->s_btn_hover), "#e7e9ed");
+        str_copy(c->s_menu_bg, sizeof(c->s_menu_bg), "#fbfbfd");
+        str_copy(c->s_menu_fg, sizeof(c->s_menu_fg), "#1c1c1e");
+    }
+    config_apply_accent(c, c->accent);
+    config_resolve_colors(c);
+}
+
+void config_apply_accent(Config *c, int accent)
+{
+    if (accent < 0 || accent > 2)
+        accent = 0;
+    c->accent = accent;
+    if (accent == 1)
+        str_copy(c->s_menu_sel, sizeof(c->s_menu_sel), "#c7c9d1");
+    else if (accent == 2)
+        str_copy(c->s_menu_sel, sizeof(c->s_menu_sel), "#8e8e93");
+    else
+        str_copy(c->s_menu_sel, sizeof(c->s_menu_sel), "#0a84ff");
+    config_resolve_colors(c);
+}
+
+/* Rewrite or append a single key without touching any other config line. */
+int config_set_value(const char *key, const char *value)
+{
+    char line[640];
+    char tmp[600];
+    FILE *in, *out;
+    int replaced = 0;
+    size_t keylen;
+
+    if (!key || !*key || !value || !cfg.config_path[0])
+        return -1;
+    keylen = strlen(key);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", cfg.config_path);
+    in = fopen(cfg.config_path, "r");
+    out = fopen(tmp, "w");
+    if (!out) {
+        if (in)
+            fclose(in);
+        return -1;
+    }
+    if (in) {
+        while (fgets(line, sizeof(line), in)) {
+            if (strncmp(line, key, keylen) == 0 && line[keylen] == '=') {
+                fprintf(out, "%s=%s\n", key, value);
+                replaced = 1;
+            } else {
+                fputs(line, out);
+            }
+        }
+        fclose(in);
+    }
+    if (!replaced)
+        fprintf(out, "%s=%s\n", key, value);
     fclose(out);
     if (rename(tmp, cfg.config_path) != 0) {
         unlink(tmp);

@@ -1,7 +1,7 @@
 /*
- * SCDE - keyboard / mouse input, drag move & resize
+ * XENUS - keyboard / mouse input, drag move & resize
  */
-#include "scde.h"
+#include "xenus.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -73,8 +73,16 @@ void input_grab_keys(void)
     grab_key(XK_d, Mod1Mask);               /* show desktop */
     grab_key(XK_e, Mod1Mask);               /* file manager / browser */
     grab_key(XK_s, Mod1Mask);               /* security center */
+    grab_key(XK_c, Mod1Mask);               /* control center */
+    grab_key(XK_n, Mod1Mask);               /* notification center */
+    grab_key(XK_x, Mod1Mask);
+    grab_key(XK_i, Mod1Mask);               /* system center */
+    grab_key(XK_Left, Mod1Mask | ControlMask);
+    grab_key(XK_Right, Mod1Mask | ControlMask);
+    grab_key(XK_Left, Mod1Mask | ControlMask | ShiftMask);
+    grab_key(XK_Right, Mod1Mask | ControlMask | ShiftMask);
 
-    XSync(sc.dpy, False);
+    XFlush(sc.dpy);
 }
 
 static void grab_button(unsigned int button, unsigned int modifiers, Cursor cur)
@@ -91,7 +99,7 @@ void input_grab_buttons(void)
 {
     grab_button(Button1, Mod1Mask, sc.cur_move);
     grab_button(Button3, Mod1Mask, sc.cur_resize);
-    XSync(sc.dpy, False);
+    XFlush(sc.dpy);
 }
 
 /* ---------------------------------------------------------- click to focus */
@@ -112,7 +120,7 @@ void input_grab_client(Window w)
         XGrabButton(sc.dpy, Button1, mods[i], w, False,
                     ButtonPressMask | ButtonReleaseMask,
                     GrabModeSync, GrabModeAsync, None, None);
-    XSync(sc.dpy, False);
+    XFlush(sc.dpy);
 }
 
 void input_ungrab_client(Window w)
@@ -120,14 +128,14 @@ void input_ungrab_client(Window w)
     if (w == None)
         return;
     XUngrabButton(sc.dpy, Button1, AnyModifier, w);
-    XSync(sc.dpy, False);
+    XFlush(sc.dpy);
 }
 
 /* --------------------------------------------------------------- dragging */
 
 void start_drag(Client *c, XButtonEvent *ev, int mode, int dirflags)
 {
-    XEvent e, last;
+    XEvent e;
     int px = ev->x_root;
     int py = ev->y_root;
     int fx0 = c->x, fy0 = c->y, w0 = c->w, h0 = c->h;
@@ -140,16 +148,11 @@ void start_drag(Client *c, XButtonEvent *ev, int mode, int dirflags)
                      ev->time) != GrabSuccess)
         return;
 
-    memset(&last, 0, sizeof(last));
-
     for (;;) {
-        XNextEvent(sc.dpy, &e);
+        event_next_coalesced(&e);
 
         if (e.type == MotionNotify) {
             int dx, dy, nw, nh, nx, ny;
-
-            while (XCheckMaskEvent(sc.dpy, PointerMotionMask, &last))
-                e = last;
 
             dx = e.xmotion.x_root - px;
             dy = e.xmotion.y_root - py;
@@ -304,7 +307,6 @@ void start_drag(Client *c, XButtonEvent *ev, int mode, int dirflags)
         frame_paint(c);
         panel_update();
     }
-    XFlush(sc.dpy);
 }
 
 /*
@@ -317,7 +319,7 @@ void start_drag(Client *c, XButtonEvent *ev, int mode, int dirflags)
 void selfdrag_window(Window win, XButtonEvent *ev, int *x, int *y,
                      int w, int h)
 {
-    XEvent e, last;
+    XEvent e;
     int px = ev->x_root;
     int py = ev->y_root;
     int x0 = *x, y0 = *y;
@@ -329,15 +331,12 @@ void selfdrag_window(Window win, XButtonEvent *ev, int *x, int *y,
                      ev->time) != GrabSuccess)
         return;
 
-    memset(&last, 0, sizeof(last));
     for (;;) {
-        XNextEvent(sc.dpy, &e);
+        event_next_coalesced(&e);
 
         if (e.type == MotionNotify) {
             int nx, ny;
 
-            while (XCheckMaskEvent(sc.dpy, PointerMotionMask, &last))
-                e = last;
             nx = x0 + (e.xmotion.x_root - px);
             ny = y0 + (e.xmotion.y_root - py);
             if (nx < -lim)
@@ -383,7 +382,6 @@ void selfdrag_window(Window win, XButtonEvent *ev, int *x, int *y,
     }
 
     XUngrabPointer(sc.dpy, CurrentTime);
-    XFlush(sc.dpy);
 }
 
 /* ------------------------------------------------------------------ keys */
@@ -395,12 +393,44 @@ void handle_key_press(XKeyEvent *ev)
     unsigned int base = mod & ~ShiftMask;
     Client *c;
 
+    if (sym == XK_Escape || (base == Mod1Mask &&
+        (sym == XK_c || sym == XK_x || sym == XK_n)))
+        log_msg("key sym=0x%lx win=0x%lx state=0x%x", (unsigned long)sym,
+                (unsigned long)ev->window, ev->state);
     if (msgbox_key(ev))
         return;
     /* Inside our own application windows Alt+chords stay window-manager
        level (close, minimise, switch, ...): our windows use no Alt-based
        input, so swallowing them here would break Alt+F4 / Alt+Down. */
+    /* Popups own the keyboard while they are up: the menu grab reports
+       events to the focused XENUS window (owner_events), so this check must
+       come before the internal application windows. */
+    if (menu_is_open()) {
+        menu_key(ev);
+        return;
+    }
+    if (cmd_is_open()) {
+        cmd_key(ev);
+        return;
+    }
     if (base != Mod1Mask) {
+        if (system_center_open() && ev->window == system_center_window()) {
+            system_center_key(ev);
+            return;
+        }
+        if (control_center_open() && ev->window == control_center_window()) {
+            control_center_key(ev);
+            return;
+        }
+        if (notification_center_open() &&
+            ev->window == notification_center_window()) {
+            notification_center_key(ev);
+            return;
+        }
+        if (text_editor_open_state() && ev->window == text_editor_window()) {
+            text_editor_key(ev);
+            return;
+        }
         if (security_gui_open() && ev->window == security_gui_window()) {
             security_gui_key(ev);
             return;
@@ -410,12 +440,16 @@ void handle_key_press(XKeyEvent *ev)
             return;
         }
     }
-    if (menu_is_open()) {
-        menu_key(ev);
-        return;
-    }
-    if (cmd_is_open()) {
-        cmd_key(ev);
+    if ((mod & (Mod1Mask | ControlMask)) == (Mod1Mask | ControlMask) &&
+        (sym == XK_Left || sym == XK_Right)) {
+        int dir = sym == XK_Right ? 1 : -1;
+
+        if (mod & ShiftMask)
+            workspace_move_active((workspace_current() + dir +
+                                   workspace_count()) % workspace_count());
+        else
+            workspace_switch((workspace_current() + dir +
+                              workspace_count()) % workspace_count());
         return;
     }
     if (base != Mod1Mask)
@@ -472,6 +506,15 @@ void handle_key_press(XKeyEvent *ev)
     case XK_s:
         security_gui_toggle();
         break;
+    case XK_c:
+        control_center_toggle();
+        break;
+    case XK_n:
+        notification_center_toggle();
+        break;
+    case XK_x:
+        system_center_toggle();
+        break;
     default:
         break;
     }
@@ -484,10 +527,26 @@ void handle_button_press(XButtonEvent *ev)
 
     if (msgbox_button(ev))
         return;
+    if (system_center_button(ev))
+        return;
+    if (control_center_button(ev))
+        return;
+    if (notification_center_button(ev))
+        return;
+    if (text_editor_button(ev))
+        return;
     if (security_gui_button(ev))
         return;
     if (fm_button(ev))
         return;
+
+    /* clicking the desktop dismisses the transient panels */
+    if (ev->window == sc.root) {
+        if (control_center_open())
+            control_center_hide();
+        if (notification_center_open())
+            notification_center_hide();
+    }
     Window child = None;
     int root_x = 0, root_y = 0, win_x = 0, win_y = 0;
     unsigned int mask = 0;

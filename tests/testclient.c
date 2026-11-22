@@ -1,6 +1,6 @@
 /*
- * Minimal X client used by the SCDE test suite.
- * usage: testclient [-g WIDTHxHEIGHT+X+Y] [-n NAME]
+ * Minimal X client used by the XENUS test suite.
+ * usage: testclient [-g WIDTHxHEIGHT+X+Y] [-n NAME] [-c CLASS]
  */
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -16,7 +16,8 @@ int main(int argc, char **argv)
     Window win;
     XEvent ev;
     int screen, w = 320, h = 220, x = 60, y = 60;
-    const char *name = "scde-test-client";
+    const char *name = "xenus-test-client";
+    const char *klass = NULL;
     int i;
     Atom wm_delete;
     XSizeHints hints;
@@ -27,6 +28,9 @@ int main(int argc, char **argv)
             i++;
         } else if (strcmp(argv[i], "-n") == 0) {
             name = argv[i + 1];
+            i++;
+        } else if (strcmp(argv[i], "-c") == 0) {
+            klass = argv[i + 1];
             i++;
         }
     }
@@ -43,6 +47,13 @@ int main(int argc, char **argv)
                               BlackPixel(dpy, screen),
                               WhitePixel(dpy, screen));
     XStoreName(dpy, win, name);
+    if (klass) {
+        XClassHint hint;
+
+        hint.res_name = (char *)name;
+        hint.res_class = (char *)klass;
+        XSetClassHint(dpy, win, &hint);
+    }
     XSelectInput(dpy, win, ExposureMask | KeyPressMask | StructureNotifyMask);
 
     hints.flags = PPosition | PSize;

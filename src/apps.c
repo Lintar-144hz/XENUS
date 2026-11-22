@@ -1,7 +1,7 @@
 /*
- * SCDE - installed applications (.desktop scan) and browser detection
+ * XENUS - installed applications (.desktop scan) and browser detection
  */
-#include "scde.h"
+#include "xenus.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -333,19 +333,62 @@ int apps_have(const char *name)
     return path_lookup(name, tmp, sizeof(tmp));
 }
 
-/* apply the configured wallpaper image (needs feh); no-op when empty */
-void wallpaper_apply(void)
+/*
+ * Apply an image to the root window with feh.  The four modes map directly
+ * to feh's background flags, so Fill/Fit/Stretch/Center are real operations
+ * and not decorative buttons.  A path/mode pair is taken explicitly: the
+ * Settings app previews a candidate before writing it to the store.
+ */
+void wallpaper_apply_path(const char *path, int mode)
 {
+    static const char *flags[] = {
+        "--bg-fill", "--bg-max", "--bg-scale", "--bg-center"
+    };
     char q[600];
     char cmd[700];
 
-    if (!cfg.wallpaper[0] || access(cfg.wallpaper, R_OK) != 0)
+    if (!path || !*path || access(path, R_OK) != 0)
         return;
     if (!apps_have("feh"))
         return;
-    shell_quote(q, sizeof(q), cfg.wallpaper);
-    snprintf(cmd, sizeof(cmd), "feh --no-fehbg --bg-fill %s", q);
+    if (mode < 0 || mode > 3)
+        mode = 0;
+    shell_quote(q, sizeof(q), path);
+    snprintf(cmd, sizeof(cmd), "feh --no-fehbg %s %s", flags[mode], q);
     spawn(cmd);
+}
+
+void wallpaper_apply(void)
+{
+    wallpaper_apply_path(cfg.wallpaper, 0);
+}
+
+/* Launch the user's enabled XDG autostart entries (one-shot, after login). */
+void apps_run_autostart(void)
+{
+    char dir[512];
+    const char *home = getenv("HOME");
+    DIR *d;
+    struct dirent *e;
+
+    if (!home || !*home)
+        return;
+    snprintf(dir, sizeof(dir), "%s/.config/autostart", home);
+    d = opendir(dir);
+    if (!d)
+        return;
+    while ((e = readdir(d)) != NULL) {
+        size_t len = strlen(e->d_name);
+        char full[768];
+        MenuEntry entry;
+
+        if (len < 9 || strcmp(e->d_name + len - 8, ".desktop") != 0)
+            continue;
+        snprintf(full, sizeof(full), "%s/%s", dir, e->d_name);
+        if (read_desktop(full, &entry) && entry.cmd[0])
+            spawn(entry.cmd);
+    }
+    closedir(d);
 }
 
 static const char *ext_of(const char *path)
@@ -440,6 +483,9 @@ void apps_open_file(const char *path)
                         : "Install a media player:\napt install mpv");
         return;
     }
+    if (text_editor_open(path))
+        return;
+
     /* everything else: xdg-open, then the browser as a last resort */
     prog = pick((const char *const[]){"xdg-open", NULL});
     if (prog && *prog) {
@@ -493,7 +539,7 @@ void apps_run(const char *what, const char *cmd)
         if (!path_lookup(exe, exe, sizeof(exe))) {
             msgbox_show("Application not found",
                         "Install it, or point the matching key in\n"
-                        "~/.config/scde/config at a program you have.");
+                        "~/.config/xenus/config at a program you have.");
             log_msg("%s not found: %s", what, exe);
             return;
         }
@@ -508,7 +554,7 @@ void apps_run_terminal(const char *what)
     if (!term[0]) {
         msgbox_show("No terminal found",
                     "Install a terminal (apt install xterm) or set\n"
-                    "terminal= in ~/.config/scde/config");
+                    "terminal= in ~/.config/xenus/config");
         return;
     }
     if (strcmp(what, "editor") == 0) {

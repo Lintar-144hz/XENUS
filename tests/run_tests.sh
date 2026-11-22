@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# SCDE test suite.  Requires: Xvfb, xdotool, x11-utils (xwininfo/xprop/xdpyinfo)
+# XENUS test suite.  Requires: Xvfb, xdotool, x11-utils (xwininfo/xprop/xdpyinfo)
 set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-BIN="$ROOT/scde"
+BIN="$ROOT/xenus"
 TESTBIN="$ROOT/tests/testclient"
 PIXELBIN="$ROOT/tests/rootpixel"
 DPY=":97"
@@ -12,9 +12,10 @@ H=768
 
 PASS=0
 FAIL=0
-WORK=$(mktemp -d /tmp/scde-test.XXXXXX)
+WORK=$(mktemp -d /tmp/xenus-test.XXXXXX)
+LOG="$WORK/xenus.log"
 HOME_SAVE="$HOME"
-SCDE_PID=""
+XENUS_PID=""
 XVFB_PID=""
 CLIENTS=()
 
@@ -35,20 +36,19 @@ geom_w() { xwininfo -id "$1" 2>/dev/null | sed -n 's/^ *Width:  *\([0-9]*\)/\1/p
 geom_h() { xwininfo -id "$1" 2>/dev/null | sed -n 's/^ *Height:  *\([0-9]*\)/\1/p'; }
 active() { xdotool getactivewindow 2>/dev/null || echo 0; }
 hexid() { printf '0x%x' "$1"; }
-dock_win() { xdotool search --onlyvisible --name '^scde-dock$' 2>/dev/null | head -1; }
+dock_win() { xdotool search --onlyvisible --name '^xenus-dock$' 2>/dev/null | head -1; }
 dock_icon() { # dock_icon <task-index> -> "X Y" centre of the dock tile
     local D X Y
     D=$(dock_win)
     X=$(geom_x "$D"); Y=$(geom_y "$D")
-    # launcher tile 8..48, separator 11, tiles at 59+48i, centre +20/+26
-    echo $(( X + 59 + 48*$1 + 20 )) $(( Y + 26 ))
+    echo $(( X + 325 + 58*$1 )) $(( Y + 39 ))
 }
 
 cleanup() {
     export HOME="$HOME_SAVE"
     local p
     for p in "${CLIENTS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done
-    [ -n "$SCDE_PID" ] && kill "$SCDE_PID" 2>/dev/null
+    [ -n "$XENUS_PID" ] && kill "$XENUS_PID" 2>/dev/null
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null
     wait 2>/dev/null
     rm -rf "$WORK"
@@ -64,7 +64,7 @@ done
 
 # ---------------------------------------------------------------- fixtures
 export HOME="$WORK/home"
-mkdir -p "$HOME/.config/scde"
+mkdir -p "$HOME/.config/xenus"
 mkdir -p "$HOME/fmdir/sub"
 printf 'hello\n' > "$HOME/fmdir/file.txt"
 printf 'png\n' > "$HOME/fmdir/pic.png"
@@ -76,7 +76,7 @@ cat > "$WORK/fakebrowser" <<'FB'
 printf '%s\n' "$@" > "$HOME/browser_args"
 FB
 chmod +x "$WORK/fakebrowser"
-cat > "$HOME/.config/scde/config" <<EOF
+cat > "$HOME/.config/xenus/config" <<EOF
 panel_height=28
 border_width=3
 border_focused=#ff6600
@@ -109,30 +109,30 @@ log "== Xvfb ready on $DPY (${W}x${H}) =="
 
 # ------------------------------------------------------------- 1. start up
 log "[1] startup / singleton / menu bar + dock"
-"$BIN" >"$WORK/scde.log" 2>&1 &
-SCDE_PID=$!
+"$BIN" >"$WORK/xenus.log" 2>&1 &
+XENUS_PID=$!
 sleep 0.6
-if kill -0 "$SCDE_PID" 2>/dev/null; then ok "scde starts"; else bad "scde starts"; cat "$WORK/scde.log"; exit 1; fi
+if kill -0 "$XENUS_PID" 2>/dev/null; then ok "xenus starts"; else bad "xenus starts"; cat "$WORK/xenus.log"; exit 1; fi
 
-if "$BIN" >"$WORK/scde2.log" 2>&1; then bad "second instance refused"; else ok "second instance refused"; fi
-grep -qi "already" "$WORK/scde2.log" && ok "singleton message printed" || bad "singleton message printed"
+if "$BIN" >"$WORK/xenus2.log" 2>&1; then bad "second instance refused"; else ok "second instance refused"; fi
+grep -qi "already" "$WORK/xenus2.log" && ok "singleton message printed" || bad "singleton message printed"
 
-if xwininfo -root -children 2>/dev/null | grep -q "scde-menubar"; then
+if xwininfo -root -children 2>/dev/null | grep -q "xenus-menubar"; then
     ok "menu bar window created"
 else
     bad "menu bar window created"
 fi
 check "menu bar sits on the top edge" \
-    sh -c "xwininfo -root -children | grep scde-menubar | grep -q '+0+0'"
+    sh -c "xwininfo -root -children | grep xenus-menubar | grep -q '+0+0'"
 check "menu bar is a slim 28 px strip" \
-    sh -c "xwininfo -root -children | grep scde-menubar | grep -qE '1024x28\+0\+0'"
-if xdotool search --onlyvisible --name '^scde-dock$' >/dev/null 2>&1; then
+    sh -c "xwininfo -root -children | grep xenus-menubar | grep -qE '1024x28\+0\+0'"
+if xdotool search --onlyvisible --name '^xenus-dock$' >/dev/null 2>&1; then
     ok "dock window created"
 else
     bad "dock window created"
 fi
-check "dock floats above the bottom edge (empty: 56 px wide, centred)" \
-    sh -c "xwininfo -root -children | grep scde-dock | grep -qE '56x60\+[0-9]+\+$((H - 68))'"
+check "dock floats above the bottom edge (empty: 302 px wide, centred)" \
+    sh -c "xwininfo -root -children | grep xenus-dock | grep -qE '302x72\+361\+$((H - 80))'"
 
 BG=$("$PIXELBIN" 10 40 2>/dev/null | tr -d '\n')
 if [ "$BG" = "0x101014" ]; then ok "dark desktop background ($BG)"; else bad "dark desktop background ($BG, want 0x101014)"; fi
@@ -157,7 +157,7 @@ WB_HEX=$(hexid "$WB")
 check "client A is mapped"      sh -c "xwininfo -id $WA | grep -q 'Map State: IsViewable'"
 
 # the frame is the nameless child of the root holding the client
-FA=$(xwininfo -root -children 2>/dev/null | sed -n 's/^ *\(0x[0-9a-fA-F]*\) (has no name):.*300x224.*/\1/p' | head -1)
+FA=$(xwininfo -root -children 2>/dev/null | sed -n 's/^ *\(0x[0-9a-fA-F]*\) (has no name):.*300x228.*/\1/p' | head -1)
 if [ -n "$FA" ]; then
     ok "client A sits in a title-bar frame ($FA)"
     check "frame A carries our border"    sh -c "xwininfo -id $FA | grep -q 'Border width: 3'"
@@ -279,14 +279,14 @@ case "$CLIST" in *"$WA_HEX"*) bad "list updated after Alt+F4" ;; *) ok "list upd
 log "[8] application menu (Alt+Space)"
 xdotool key alt+space
 sleep 0.4
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     ok "menu opens"
 else
     bad "menu opens"
 fi
 xdotool key Escape
 sleep 0.3
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     bad "Escape closes menu"
 else
     ok "Escape closes menu"
@@ -298,7 +298,7 @@ sleep 0.4
 xdotool key Return
 sleep 0.8
 if [ -f "$MARKER1" ]; then ok "menu entry runs its command"; else bad "menu entry runs its command"; fi
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     bad "menu closes after selection"
 else
     ok "menu closes after selection"
@@ -308,7 +308,7 @@ fi
 log "[9] Alt+F2 command launcher"
 xdotool key alt+F2
 sleep 0.4
-if xdotool search --onlyvisible --name '^scde-cmd$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-cmd$' >/dev/null 2>&1; then
     ok "command launcher opens"
 else
     bad "command launcher opens"
@@ -319,7 +319,7 @@ sleep 0.2
 xdotool key Return
 sleep 0.8
 if [ -f "$MARKER2" ]; then ok "command launcher runs command"; else bad "command launcher runs command"; fi
-if xdotool search --onlyvisible --name '^scde-cmd$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-cmd$' >/dev/null 2>&1; then
     bad "command launcher closes after run"
 else
     ok "command launcher closes after run"
@@ -328,7 +328,7 @@ fi
 # ---------------------------------------------------------- 10. help/version
 log "[10] help / version / Alt+Enter"
 check "help lists Alt+Enter binding" sh -c "'$BIN' -h | grep -q 'Alt+Enter'"
-check "version flag"                 sh -c "'$BIN' -v | grep -q 'scde 0.2'"
+check "version flag"                 sh -c "'$BIN' -v | grep -q 'xenus 0.2'"
 rm -f "$WORK/term_marker"
 xdotool key alt+Return
 sleep 0.8
@@ -337,13 +337,13 @@ if [ -f "$WORK/term_marker" ]; then ok "Alt+Enter runs the configured terminal";
 # ------------------------------------------------- 10b. file manager
 log "[10b] built-in file manager"
 xdotool key alt+e; sleep 0.6
-FMWIN=$(xdotool search --onlyvisible --name '^scde-fm' 2>/dev/null | head -1)
+FMWIN=$(xdotool search --onlyvisible --name '^xenus-fm' 2>/dev/null | head -1)
 if [ -n "$FMWIN" ]; then ok "Alt+E opens the file manager"; else bad "Alt+E opens the file manager"; fi
 check "fm window has a sane width" \
     sh -c "[ -n '${FMWIN:-}' ] && xwininfo -id $FMWIN | grep -qE 'Width: +8[0-9][0-9]'"
 FMNAME=$(xdotool getwindowname "$FMWIN" 2>/dev/null)
 case "$FMNAME" in
-    *"scde-fm: $HOME"*) ok "fm opens in HOME" ;;
+    *"xenus-fm: $HOME"*) ok "fm opens in HOME" ;;
     *) bad "fm opens in HOME (got '$FMNAME')" ;;
 esac
 # navigate into the subfolder with the keyboard
@@ -358,7 +358,7 @@ esac
 xdotool key BackSpace; sleep 0.5
 FMNAME=$(xdotool getwindowname "$FMWIN" 2>/dev/null)
 case "$FMNAME" in
-    *"scde-fm: $HOME"*) ok "Backspace goes to the parent" ;;
+    *"xenus-fm: $HOME"*) ok "Backspace goes to the parent" ;;
     *) bad "Backspace goes to the parent (got '$FMNAME')" ;;
 esac
 # create a folder through the edit line
@@ -367,7 +367,7 @@ xdotool type --delay 25 "newdir"; sleep 0.2
 xdotool key Return; sleep 0.5
 if [ -d "$HOME/newdir" ]; then ok "New Folder creates a directory"; else bad "New Folder creates a directory"; fi
 xdotool key Escape; sleep 0.4
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
     bad "Escape closes the file manager"
 else
     ok "Escape closes the file manager"
@@ -375,22 +375,23 @@ fi
 
 # ------------------------------------------------------ 11. signals / lock
 log "[11] signals and lock"
-if kill -0 "$SCDE_PID" 2>/dev/null; then ok "still running after tests"; else bad "still running after tests"; fi
+if kill -0 "$XENUS_PID" 2>/dev/null; then ok "still running after tests"; else bad "still running after tests"; fi
 
-kill -TERM "$SCDE_PID"
+kill -TERM "$XENUS_PID"
 for i in $(seq 1 50); do
-    kill -0 "$SCDE_PID" 2>/dev/null || break
+    kill -0 "$XENUS_PID" 2>/dev/null || break
     sleep 0.1
 done
-if kill -0 "$SCDE_PID" 2>/dev/null; then bad "SIGTERM shuts down"; else ok "SIGTERM shuts down"; fi
-wait "$SCDE_PID" 2>/dev/null
-SCDE_PID=""
-check "clean shutdown logged" grep -q "clean shutdown" "$WORK/scde.log"
+if kill -0 "$XENUS_PID" 2>/dev/null; then bad "SIGTERM shuts down"; else ok "SIGTERM shuts down"; fi
+wait "$XENUS_PID" 2>/dev/null
+XENUS_PID=""
+check "clean shutdown logged" grep -q "clean shutdown" "$WORK/xenus.log"
 
-"$BIN" >"$WORK/scde3.log" 2>&1 &
-SCDE_PID=$!
+LOG="$WORK/xenus3.log"
+"$BIN" >"$LOG" 2>&1 &
+XENUS_PID=$!
 sleep 0.6
-if kill -0 "$SCDE_PID" 2>/dev/null; then ok "restarts after shutdown (lock released)"; else bad "restarts after shutdown (lock released)"; cat "$WORK/scde3.log"; fi
+if kill -0 "$XENUS_PID" 2>/dev/null; then ok "restarts after shutdown (lock released)"; else bad "restarts after shutdown (lock released)"; cat "$WORK/xenus3.log"; fi
 
 # --------------------------------------------------------- 12. resources
 log "[12] resource usage"
@@ -401,27 +402,27 @@ sleep 1.0
 WC=$(xdotool search --name '^winC$' 2>/dev/null | head -1)
 WC_HEX=$(hexid "${WC:-0}")
 
-# count only the instances on the test display: a SCDE session running
+# count only the instances on the test display: a XENUS session running
 # elsewhere on this machine must not affect the result
 NR_PROC=0
-for p in $(pgrep -x scde 2>/dev/null); do
+for p in $(pgrep -x xenus 2>/dev/null); do
     if tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qxF "DISPLAY=$DPY"; then
         NR_PROC=$((NR_PROC + 1))
     fi
 done
-if [ "$NR_PROC" = "1" ]; then ok "exactly one scde process"; else bad "exactly one scde process ($NR_PROC)"; fi
+if [ "$NR_PROC" = "1" ]; then ok "exactly one xenus process"; else bad "exactly one xenus process ($NR_PROC)"; fi
 
-NR_TASK=$(ls "/proc/$SCDE_PID/task" 2>/dev/null | wc -l)
+NR_TASK=$(ls "/proc/$XENUS_PID/task" 2>/dev/null | wc -l)
 if [ "$NR_TASK" = "1" ]; then ok "single thread"; else bad "single thread ($NR_TASK)"; fi
 
-RSS_KB=$(ps -o rss= -p "$SCDE_PID" 2>/dev/null | tr -d ' ')
+RSS_KB=$(ps -o rss= -p "$XENUS_PID" 2>/dev/null | tr -d ' ')
 if [ -n "$RSS_KB" ] && [ "$RSS_KB" -lt 40960 ]; then
     ok "resident memory ${RSS_KB} kB (< 40 MB)"
 else
     bad "resident memory (${RSS_KB:-?} kB)"
 fi
 
-read_cpu() { awk '{print $14 + $15}' "/proc/$SCDE_PID/stat" 2>/dev/null; }
+read_cpu() { awk '{print $14 + $15}' "/proc/$XENUS_PID/stat" 2>/dev/null; }
 C1=$(read_cpu); sleep 3; C2=$(read_cpu)
 CPU_TICKS=$((C2 - C1))
 if [ "$CPU_TICKS" -le 3 ]; then
@@ -431,7 +432,7 @@ else
 fi
 
 BIN_SIZE=$(stat -c %s "$BIN")
-STRIPPED=$(strip -o "$WORK/scde.stripped" "$BIN" 2>/dev/null && stat -c %s "$WORK/scde.stripped")
+STRIPPED=$(strip -o "$WORK/xenus.stripped" "$BIN" 2>/dev/null && stat -c %s "$WORK/xenus.stripped")
 ok "binary size: $BIN_SIZE bytes, ${STRIPPED:-?} bytes stripped"
 
 # ------------------------------------------------------ 13. client vanishes
@@ -445,16 +446,17 @@ case "$CLIST" in *"$WB_HEX"*) bad "vanished client removed from list" ;; *) ok "
 
 # ------------------------------------------- 14. config reload / restart
 log "[14] config reload (menu bar taller) + existing windows"
-kill -TERM "$SCDE_PID" 2>/dev/null
-for i in $(seq 1 50); do kill -0 "$SCDE_PID" 2>/dev/null || break; sleep 0.1; done
-wait "$SCDE_PID" 2>/dev/null
-SCDE_PID=""
-sed -i 's/panel_height=28/panel_height=34/' "$HOME/.config/scde/config"
-"$BIN" >"$WORK/scde4.log" 2>&1 &
-SCDE_PID=$!
+kill -TERM "$XENUS_PID" 2>/dev/null
+for i in $(seq 1 50); do kill -0 "$XENUS_PID" 2>/dev/null || break; sleep 0.1; done
+wait "$XENUS_PID" 2>/dev/null
+XENUS_PID=""
+sed -i 's/panel_height=28/panel_height=34/' "$HOME/.config/xenus/config"
+LOG="$WORK/xenus4.log"
+"$BIN" >"$LOG" 2>&1 &
+XENUS_PID=$!
 sleep 0.8
-if kill -0 "$SCDE_PID" 2>/dev/null; then ok "restarts with new config"; else bad "restarts with new config"; cat "$WORK/scde4.log"; fi
-MB=$(xdotool search --onlyvisible --name '^scde-menubar$' 2>/dev/null | head -1)
+if kill -0 "$XENUS_PID" 2>/dev/null; then ok "restarts with new config"; else bad "restarts with new config"; cat "$WORK/xenus4.log"; fi
+MB=$(xdotool search --onlyvisible --name '^xenus-menubar$' 2>/dev/null | head -1)
 check "menu bar height follows the new config" \
     sh -c "[ -n '${MB:-}' ] && xwininfo -id $MB | grep -qE 'Height: +34'"
 CLIST=$(xprop -root _NET_CLIENT_LIST 2>/dev/null)
@@ -523,13 +525,13 @@ if xwininfo -id "$XC" | grep -q 'IsViewable'; then ok "Alt+D brings them back"; 
 # right click on the desktop (empty area: left half, below the window)
 xdotool mousemove 200 600; sleep 0.2
 xdotool click 3; sleep 0.5
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     ok "desktop right click opens a menu"
 else
     bad "desktop right click opens a menu"
 fi
 xdotool key Escape; sleep 0.3
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     bad "Escape closes the desktop menu"
 else
     ok "Escape closes the desktop menu"
@@ -548,37 +550,38 @@ fi
 
 # ------------------------------------------- 16. missing app notice / detection
 log "[16] missing program notice + terminal detection"
-kill -TERM "$SCDE_PID" 2>/dev/null
-for i in $(seq 1 50); do kill -0 "$SCDE_PID" 2>/dev/null || break; sleep 0.1; done
-wait "$SCDE_PID" 2>/dev/null
-SCDE_PID=""
+kill -TERM "$XENUS_PID" 2>/dev/null
+for i in $(seq 1 50); do kill -0 "$XENUS_PID" 2>/dev/null || break; sleep 0.1; done
+wait "$XENUS_PID" 2>/dev/null
+XENUS_PID=""
 
-CFG="$HOME/.config/scde/config"
-sed -i '/^menu=/d; s|^terminal=.*|terminal=scde-no-such-terminal|' "$CFG"
-"$BIN" >"$WORK/scde5.log" 2>&1 &
-SCDE_PID=$!
+CFG="$HOME/.config/xenus/config"
+sed -i '/^menu=/d; s|^terminal=.*|terminal=xenus-no-such-terminal|' "$CFG"
+LOG="$WORK/xenus5.log"
+"$BIN" >"$LOG" 2>&1 &
+XENUS_PID=$!
 sleep 0.7
-if kill -0 "$SCDE_PID" 2>/dev/null; then ok "restarts with a missing terminal set"; else bad "restarts with a missing terminal set"; fi
+if kill -0 "$XENUS_PID" 2>/dev/null; then ok "restarts with a missing terminal set"; else bad "restarts with a missing terminal set"; fi
 
 xdotool key alt+space; sleep 0.4
 xdotool key Return; sleep 0.6
-if xdotool search --onlyvisible --name '^scde-msgbox$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-msgbox$' >/dev/null 2>&1; then
     ok "missing terminal shows a notice dialog"
 else
     bad "missing terminal shows a notice dialog"
 fi
 xdotool key Escape; sleep 0.4
-if xdotool search --onlyvisible --name '^scde-msgbox$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-msgbox$' >/dev/null 2>&1; then
     bad "Escape closes the notice dialog"
 else
     ok "Escape closes the notice dialog"
 fi
 
 # now provide a real terminal on PATH and expect it to be launched
-kill -TERM "$SCDE_PID" 2>/dev/null
-for i in $(seq 1 50); do kill -0 "$SCDE_PID" 2>/dev/null || break; sleep 0.1; done
-wait "$SCDE_PID" 2>/dev/null
-SCDE_PID=""
+kill -TERM "$XENUS_PID" 2>/dev/null
+for i in $(seq 1 50); do kill -0 "$XENUS_PID" 2>/dev/null || break; sleep 0.1; done
+wait "$XENUS_PID" 2>/dev/null
+XENUS_PID=""
 mkdir -p "$HOME/bin"
 cat > "$HOME/bin/xterm" <<'TERM'
 #!/bin/sh
@@ -587,8 +590,9 @@ TERM
 chmod +x "$HOME/bin/xterm"
 sed -i 's|^terminal=.*|terminal=xterm|' "$CFG"
 rm -f "$HOME/term_marker"
-PATH="$HOME/bin:$PATH" "$BIN" >"$WORK/scde6.log" 2>&1 &
-SCDE_PID=$!
+LOG="$WORK/xenus6.log"
+PATH="$HOME/bin:$PATH" "$BIN" >"$LOG" 2>&1 &
+XENUS_PID=$!
 sleep 0.7
 xdotool key alt+space; sleep 0.4
 xdotool key Return; sleep 0.7
@@ -600,10 +604,10 @@ fi
 
 # ------------------------------------------------- 17. desktop shortcuts
 log "[17] desktop shortcuts (select, open, context menu, move)"
-kill -TERM "$SCDE_PID" 2>/dev/null
-for i in $(seq 1 50); do kill -0 "$SCDE_PID" 2>/dev/null || break; sleep 0.1; done
-wait "$SCDE_PID" 2>/dev/null
-SCDE_PID=""
+kill -TERM "$XENUS_PID" 2>/dev/null
+for i in $(seq 1 50); do kill -0 "$XENUS_PID" 2>/dev/null || break; sleep 0.1; done
+wait "$XENUS_PID" 2>/dev/null
+XENUS_PID=""
 
 # empty the desktop: close every managed window
 for id in $(xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -o '0x[0-9a-fA-F]\+'); do
@@ -612,7 +616,7 @@ done
 sleep 0.4
 
 DESK="$HOME/Desktop"
-mkdir -p "$DESK" "$HOME/.local/share/scde"
+mkdir -p "$DESK" "$HOME/.local/share/xenus"
 cat > "$DESK/test.desktop" <<ENTRY
 [Desktop Entry]
 Type=Application
@@ -620,16 +624,17 @@ Name=Test Shortcut
 Exec=touch $HOME/desktop_marker
 ENTRY
 # pin the shortcut so its position does not depend on the grid
-printf '400 300 %s/test.desktop\n' "$DESK" > "$HOME/.local/share/scde/desktop.layout"
+printf '400 300 %s/test.desktop\n' "$DESK" > "$HOME/.local/share/xenus/desktop.layout"
 rm -f "$HOME/desktop_marker"
 
-"$BIN" >"$WORK/scde7.log" 2>&1 &
-SCDE_PID=$!
+LOG="$WORK/xenus7.log"
+"$BIN" >"$LOG" 2>&1 &
+XENUS_PID=$!
 sleep 0.9
-if kill -0 "$SCDE_PID" 2>/dev/null; then
+if kill -0 "$XENUS_PID" 2>/dev/null; then
     ok "starts with a desktop shortcut"
 else
-    bad "starts with a desktop shortcut"; cat "$WORK/scde7.log"
+    bad "starts with a desktop shortcut"; cat "$WORK/xenus7.log"
 fi
 
 # the shortcut is painted on the root window at its saved position
@@ -672,7 +677,7 @@ fi
 # right click on the shortcut opens its own menu
 xdotool mousemove 446 338; sleep 0.25
 xdotool click 3; sleep 0.5
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     ok "right click on a shortcut opens a menu"
 else
     bad "right click on a shortcut opens a menu"
@@ -695,7 +700,7 @@ xdotool mousemove 446 338; sleep 0.3
 xdotool mousedown 1; sleep 0.3
 xdotool mousemove 600 400; sleep 0.4
 xdotool mouseup 1; sleep 0.5
-LAY="$HOME/.local/share/scde/desktop.layout"
+LAY="$HOME/.local/share/xenus/desktop.layout"
 LX=$(awk '{print $1}' "$LAY" 2>/dev/null)
 LY=$(awk '{print $2}' "$LAY" 2>/dev/null)
 if [ -n "${LX:-}" ] && [ "${LX:-0}" -gt 400 ] && grep -q "$DESK/test.desktop" "$LAY"; then
@@ -705,12 +710,12 @@ else
 fi
 
 # --------------------------------------- 18. dock integration (internal)
-log "[18] dock: File Manager + SCDE Security entries"
+log "[18] dock: File Manager + XENUS Security entries"
 
 # The taskbar registry publishes its entries on the root window so the
 # window list can be verified exactly instead of pixel guessing.  Only real
 # window ids are ever extracted (a missing property must yield nothing).
-tasklist()  { xprop -root _SCDE_TASK_LIST 2>/dev/null | grep -o '0x[0-9a-fA-F]*' | tr '\n' ' '; }
+tasklist()  { xprop -root _XENUS_TASK_LIST 2>/dev/null | grep -o '0x[0-9a-fA-F]*' | tr '\n' ' '; }
 tasknames() { local w; for w in $(tasklist); do xdotool getwindowname $((w)) 2>/dev/null; done; }
 taskcount() { tasknames | grep -c -- "$1"; }
 # dock icons are computed from the live dock geometry (helper above);
@@ -734,22 +739,22 @@ fi
 
 # 1. open the file manager -> its entry appears
 xdotool key alt+e; sleep 0.7
-FM=$(xdotool search --onlyvisible --name '^scde-fm' 2>/dev/null | head -1)
+FM=$(xdotool search --onlyvisible --name '^xenus-fm' 2>/dev/null | head -1)
 if [ -n "${FM:-}" ]; then ok "File Manager window opens"; else bad "File Manager window opens"; fi
-if [ "$(taskcount 'scde-fm')" = "1" ]; then
+if [ "$(taskcount 'xenus-fm')" = "1" ]; then
     ok "File Manager taskbar entry exists"
 else
-    bad "File Manager taskbar entry exists (got $(taskcount 'scde-fm'))"
+    bad "File Manager taskbar entry exists (got $(taskcount 'xenus-fm'))"
 fi
 
 # 2. open the security center -> its entry appears
 xdotool key alt+s; sleep 0.7
-SG=$(xdotool search --onlyvisible --name '^SCDE Security' 2>/dev/null | head -1)
-if [ -n "${SG:-}" ]; then ok "SCDE Security window opens"; else bad "SCDE Security window opens"; fi
-if [ "$(taskcount 'SCDE Security')" = "1" ]; then
-    ok "SCDE Security taskbar entry exists"
+SG=$(xdotool search --onlyvisible --name '^XENUS Security' 2>/dev/null | head -1)
+if [ -n "${SG:-}" ]; then ok "XENUS Security window opens"; else bad "XENUS Security window opens"; fi
+if [ "$(taskcount 'XENUS Security')" = "1" ]; then
+    ok "XENUS Security taskbar entry exists"
 else
-    bad "SCDE Security taskbar entry exists (got $(taskcount 'SCDE Security'))"
+    bad "XENUS Security taskbar entry exists (got $(taskcount 'XENUS Security'))"
 fi
 if [ "$(tasklist | wc -w)" = "2" ]; then
     ok "exactly two taskbar entries"
@@ -763,8 +768,8 @@ xdotool windowactivate "$SG"; sleep 0.4
 xdotool windowactivate "$FM"; sleep 0.4
 xdotool windowactivate "$SG"; sleep 0.4
 if [ "$(tasklist | wc -w)" = "2" ] &&
-   [ "$(taskcount 'scde-fm')" = "1" ] &&
-   [ "$(taskcount 'SCDE Security')" = "1" ]; then
+   [ "$(taskcount 'xenus-fm')" = "1" ] &&
+   [ "$(taskcount 'XENUS Security')" = "1" ]; then
     ok "showing already open windows keeps exactly one entry each"
 else
     bad "showing already open windows keeps exactly one entry each ($(tasklist | wc -w) entries)"
@@ -773,12 +778,12 @@ fi
 # 4. minimising keeps the entry, hiding the window
 if [ -n "${FM:-}" ]; then xdotool windowactivate "$FM"; sleep 0.4; fi
 xdotool key alt+Down; sleep 0.6
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
     bad "Alt+Down hides the file manager"
 else
     ok "Alt+Down hides the file manager"
 fi
-if [ "$(taskcount 'scde-fm')" = "1" ]; then
+if [ "$(taskcount 'xenus-fm')" = "1" ]; then
     ok "hidden File Manager keeps its taskbar entry"
 else
     bad "hidden File Manager keeps its taskbar entry"
@@ -787,12 +792,12 @@ fi
 # 5. clicking the icon restores and focuses the window
 D0=($(dock_icon 0)); xdotool mousemove "${D0[0]}" "${D0[1]}"; sleep 0.25
 xdotool click 1; sleep 0.6
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
     ok "dock click restores the File Manager"
 else
     bad "dock click restores the File Manager"
 fi
-FM=$(xdotool search --onlyvisible --name '^scde-fm' 2>/dev/null | head -1)
+FM=$(xdotool search --onlyvisible --name '^xenus-fm' 2>/dev/null | head -1)
 if [ "$(xdotool getwindowfocus 2>/dev/null)" = "$FM" ]; then
     ok "dock click focuses the File Manager"
 else
@@ -802,30 +807,30 @@ fi
 # 6. closing the File Manager drops only its entry
 if [ -n "${FM:-}" ]; then xdotool windowactivate "$FM"; sleep 0.4; fi
 xdotool key Escape; sleep 0.6
-if [ "$(taskcount 'scde-fm')" = "0" ]; then
+if [ "$(taskcount 'xenus-fm')" = "0" ]; then
     ok "closing the File Manager removes its taskbar entry"
 else
     bad "closing the File Manager removes its taskbar entry"
 fi
-if [ "$(taskcount 'SCDE Security')" = "1" ]; then
+if [ "$(taskcount 'XENUS Security')" = "1" ]; then
     ok "the other taskbar entry is untouched"
 else
     bad "the other taskbar entry is untouched"
 fi
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
     bad "File Manager window is gone after close"
 else
     ok "File Manager window is gone after close"
 fi
 
 # 7. Alt+F4 closes the security center and drops its entry
-SG=$(xdotool search --onlyvisible --name '^SCDE Security' 2>/dev/null | head -1)
+SG=$(xdotool search --onlyvisible --name '^XENUS Security' 2>/dev/null | head -1)
 if [ -n "${SG:-}" ]; then xdotool windowactivate "$SG"; sleep 0.5; fi
 xdotool key alt+F4; sleep 0.7
-if [ "$(taskcount 'SCDE Security')" = "0" ]; then
-    ok "Alt+F4 removes the SCDE Security taskbar entry"
+if [ "$(taskcount 'XENUS Security')" = "0" ]; then
+    ok "Alt+F4 removes the XENUS Security taskbar entry"
 else
-    bad "Alt+F4 removes the SCDE Security taskbar entry"
+    bad "Alt+F4 removes the XENUS Security taskbar entry"
 fi
 if [ "$(tasklist | wc -w)" = "0" ]; then
     ok "task list is empty after closing both"
@@ -836,15 +841,15 @@ fi
 # 8. reopening brings back exactly one entry per application
 xdotool key alt+e; sleep 0.7
 xdotool key alt+s; sleep 0.7
-if [ "$(taskcount 'scde-fm')" = "1" ]; then
+if [ "$(taskcount 'xenus-fm')" = "1" ]; then
     ok "exactly one File Manager entry after reopen"
 else
     bad "exactly one File Manager entry after reopen"
 fi
-if [ "$(taskcount 'SCDE Security')" = "1" ]; then
-    ok "exactly one SCDE Security entry after reopen"
+if [ "$(taskcount 'XENUS Security')" = "1" ]; then
+    ok "exactly one XENUS Security entry after reopen"
 else
-    bad "exactly one SCDE Security entry after reopen"
+    bad "exactly one XENUS Security entry after reopen"
 fi
 if [ "$(tasklist | wc -w)" = "2" ]; then
     ok "exactly two entries after reopening both"
@@ -855,35 +860,35 @@ fi
 # 9. the second icon belongs to the security center
 D1=($(dock_icon 1)); xdotool mousemove "${D1[0]}" "${D1[1]}"; sleep 0.25
 xdotool click 1; sleep 0.6
-SG=$(xdotool search --onlyvisible --name '^SCDE Security' 2>/dev/null | head -1)
+SG=$(xdotool search --onlyvisible --name '^XENUS Security' 2>/dev/null | head -1)
 if [ "$(xdotool getwindowfocus 2>/dev/null)" = "$SG" ]; then
-    ok "dock click focuses the SCDE Security window"
+    ok "dock click focuses the XENUS Security window"
 else
-    bad "dock click focuses the SCDE Security window (got $(xdotool getwindowfocus 2>/dev/null), want ${SG:-?})"
+    bad "dock click focuses the XENUS Security window (got $(xdotool getwindowfocus 2>/dev/null), want ${SG:-?})"
 fi
 
 # 10. show desktop hides both, both entries stay, restore brings them back
 xdotool key alt+d; sleep 0.7
-if [ "$(taskcount 'scde-fm')" = "1" ] && [ "$(taskcount 'SCDE Security')" = "1" ]; then
+if [ "$(taskcount 'xenus-fm')" = "1" ] && [ "$(taskcount 'XENUS Security')" = "1" ]; then
     ok "show desktop keeps both taskbar entries"
 else
     bad "show desktop keeps both taskbar entries"
 fi
 xdotool key alt+d; sleep 0.7
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1 &&
-   xdotool search --onlyvisible --name '^SCDE Security' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1 &&
+   xdotool search --onlyvisible --name '^XENUS Security' >/dev/null 2>&1; then
     ok "show desktop restores both windows"
 else
     bad "show desktop restores both windows"
 fi
 
 # leave a clean desktop behind: close both, entry by entry
-SG=$(xdotool search --onlyvisible --name '^SCDE Security' 2>/dev/null | head -1)
+SG=$(xdotool search --onlyvisible --name '^XENUS Security' 2>/dev/null | head -1)
 if [ -n "${SG:-}" ]; then
     xdotool windowactivate "$SG"; sleep 0.4
     xdotool key Escape; sleep 0.5
 fi
-FM=$(xdotool search --onlyvisible --name '^scde-fm' 2>/dev/null | head -1)
+FM=$(xdotool search --onlyvisible --name '^xenus-fm' 2>/dev/null | head -1)
 if [ -n "${FM:-}" ]; then
     xdotool windowactivate "$FM"; sleep 0.4
     xdotool key Escape; sleep 0.5
@@ -899,12 +904,12 @@ log "[19] Harbor redesign: FM sidebar + search, Security cards, wallpaper"
 # File Manager geometry on this screen: 860x600, centred.
 # sidebar = left 184 px, toolbar search box = right 150 px of the 36 px bar.
 xdotool key alt+e; sleep 0.7
-FM=$(xdotool search --onlyvisible --name '^scde-fm' 2>/dev/null | head -1)
+FM=$(xdotool search --onlyvisible --name '^xenus-fm' 2>/dev/null | head -1)
 if [ -n "${FM:-}" ]; then ok "Harbor FM opens"; else bad "Harbor FM opens"; fi
 check "Harbor FM keeps its 860 px width" \
     sh -c "[ -n '${FM:-}' ] && xwininfo -id $FM | grep -qE 'Width: +860'"
 FMNAME=$(xdotool getwindowname "$FM" 2>/dev/null)
-if [ "$FMNAME" = "scde-fm: $HOME" ]; then
+if [ "$FMNAME" = "xenus-fm: $HOME" ]; then
     ok "Harbor FM opens in HOME"
 else
     bad "Harbor FM opens in HOME (got '$FMNAME')"
@@ -924,12 +929,12 @@ esac
 # Escape clears an active filter but keeps the window open
 xdotool key Escape; sleep 0.5
 FMNAME=$(xdotool getwindowname "$FM" 2>/dev/null)
-if [ "$FMNAME" = "scde-fm: $HOME" ]; then
+if [ "$FMNAME" = "xenus-fm: $HOME" ]; then
     ok "Escape clears the search filter"
 else
     bad "Escape clears the search filter (got '$FMNAME')"
 fi
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
     ok "clearing the filter keeps the FM open"
 else
     bad "clearing the filter keeps the FM open"
@@ -937,20 +942,20 @@ fi
 
 # double click on the first visible row ("..", below the column header):
 # exercises the offset list click mapping, ascends to the parent
-xdotool mousemove $((FXX + 400)) $((FYY + 98)); sleep 0.25
+xdotool mousemove $((FXX + 238)) $((FYY + 128)); sleep 0.25
 xdotool click --repeat 2 --delay 150 1; sleep 0.7
 FMNAME=$(xdotool getwindowname "$FM" 2>/dev/null)
-if [ "$FMNAME" = "scde-fm: $WORK" ]; then
+if [ "$FMNAME" = "xenus-fm: $WORK" ]; then
     ok "list click mapping works beside the sidebar"
 else
     bad "list click mapping works beside the sidebar (got '$FMNAME')"
 fi
 
 # sidebar "Home" row (first place row) navigates back to HOME
-xdotool mousemove $((FXX + 90)) $((FYY + 102)); sleep 0.25
+xdotool mousemove $((FXX + 90)) $((FYY + 118)); sleep 0.25
 xdotool click 1; sleep 0.6
 FMNAME=$(xdotool getwindowname "$FM" 2>/dev/null)
-if [ "$FMNAME" = "scde-fm: $HOME" ]; then
+if [ "$FMNAME" = "xenus-fm: $HOME" ]; then
     ok "sidebar Home navigates to HOME"
 else
     bad "sidebar Home navigates to HOME (got '$FMNAME')"
@@ -967,7 +972,7 @@ case "$FMNAME" in
     *) bad "search + Return descends into the match (got '$FMNAME')" ;;
 esac
 xdotool key Escape; sleep 0.5
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
     bad "Escape closes the Harbor FM"
 else
     ok "Escape closes the Harbor FM"
@@ -975,13 +980,13 @@ fi
 
 # Security Center keeps its card size, title and taskbar entry
 xdotool key alt+s; sleep 0.7
-SG=$(xdotool search --onlyvisible --name '^SCDE Security' 2>/dev/null | head -1)
+SG=$(xdotool search --onlyvisible --name '^XENUS Security' 2>/dev/null | head -1)
 if [ -n "${SG:-}" ]; then ok "Harbor Security Center opens"; else bad "Harbor Security Center opens"; fi
 check "Security Center keeps its 600 px card width" \
     sh -c "[ -n '${SG:-}' ] && xwininfo -id $SG | grep -qE 'Width: +600'"
 check "Security Center keeps its 640 px card height" \
     sh -c "[ -n '${SG:-}' ] && xwininfo -id $SG | grep -qE 'Height: +640'"
-if [ "$(taskcount 'SCDE Security')" = "1" ]; then
+if [ "$(taskcount 'XENUS Security')" = "1" ]; then
     ok "Harbor Security keeps one taskbar entry"
 else
     bad "Harbor Security keeps one taskbar entry"
@@ -995,29 +1000,30 @@ else
 fi
 
 # design tokens stay in the source (guards against accidental reverts)
-check "Harbor accent in the palette" grep -q "#7c9cbf" "$ROOT/src/config.c"
-check "menu bar in the source" grep -q "scde-menubar" "$ROOT/src/panel.c"
-check "floating dock in the source" grep -q "scde-dock" "$ROOT/src/dock.c"
+check "macOS accent in the palette" grep -q "#0a84ff" "$ROOT/src/config.c"
+check "menu bar in the source" grep -q "xenus-menubar" "$ROOT/src/panel.c"
+check "floating dock in the source" grep -q "xenus-dock" "$ROOT/src/dock.c"
 check "FM favorites sidebar in the source" grep -q "fav_names" "$ROOT/src/fm.c"
 check "FM forward history in the source" grep -q "n_fwd" "$ROOT/src/fm.c"
 check "FM search filter in the source" grep -q "sbuf" "$ROOT/src/fm.c"
 check "Security cards in the source" grep -q "sg_card" "$ROOT/src/security_gui.c"
-check "wallpaper motif in the source" grep -q "Harbor signature" "$ROOT/src/main.c"
+check "wallpaper glow in the source" grep -q "wp_isqrt" "$ROOT/src/main.c"
 check "3 GiB ceiling in the sandbox" grep -q "3072" "$ROOT/src/security/sandbox.c"
-check "no SCDE CPU quota in resource defaults" grep -q "cpu_seconds = 0" "$ROOT/src/security/resource.c"
+check "no XENUS CPU quota in resource defaults" grep -q "cpu_seconds = 0" "$ROOT/src/security/resource.c"
 
 # gradient wallpaper: restart with distinct stops, sample two flat points
-kill -TERM "$SCDE_PID" 2>/dev/null
-for i in $(seq 1 50); do kill -0 "$SCDE_PID" 2>/dev/null || break; sleep 0.1; done
-wait "$SCDE_PID" 2>/dev/null
-SCDE_PID=""
-sed -i 's/^wallpaper_top=.*/wallpaper_top=#262e3b/; s/^wallpaper_bottom=.*/wallpaper_bottom=#12151b/' "$HOME/.config/scde/config"
-"$BIN" >"$WORK/scde8.log" 2>&1 &
-SCDE_PID=$!
+kill -TERM "$XENUS_PID" 2>/dev/null
+for i in $(seq 1 50); do kill -0 "$XENUS_PID" 2>/dev/null || break; sleep 0.1; done
+wait "$XENUS_PID" 2>/dev/null
+XENUS_PID=""
+sed -i 's/^wallpaper_top=.*/wallpaper_top=#262e3b/; s/^wallpaper_bottom=.*/wallpaper_bottom=#12151b/' "$HOME/.config/xenus/config"
+LOG="$WORK/xenus8.log"
+"$BIN" >"$LOG" 2>&1 &
+XENUS_PID=$!
 sleep 0.9
-if kill -0 "$SCDE_PID" 2>/dev/null; then ok "restarts with the Harbor gradient"; else bad "restarts with the Harbor gradient"; fi
+if kill -0 "$XENUS_PID" 2>/dev/null; then ok "restarts with the Harbor gradient"; else bad "restarts with the Harbor gradient"; fi
 chan() { printf '%d' "0x${1:$((2 + $2 * 2)):2}"; }
-TOP=$("$PIXELBIN" 700 40 2>/dev/null | tr -d '\n')
+TOP=$("$PIXELBIN" 120 40 2>/dev/null | tr -d '\n')
 BOT=$("$PIXELBIN" 700 730 2>/dev/null | tr -d '\n')
 if near "$(chan "$TOP" 0)" 37 5 && near "$(chan "$TOP" 1)" 45 5 && near "$(chan "$TOP" 2)" 58 5; then
     ok "gradient top reads back ($TOP)"
@@ -1039,18 +1045,18 @@ fi
 log "[20] menu bar launcher, dock right-click, sandbox memory config"
 
 # menu bar launcher mark opens the application menu
-MB=$(xdotool search --onlyvisible --name '^scde-menubar$' 2>/dev/null | head -1)
+MB=$(xdotool search --onlyvisible --name '^xenus-menubar$' 2>/dev/null | head -1)
 if [ -n "${MB:-}" ]; then ok "menu bar present for menu test"; else bad "menu bar present for menu test"; fi
 MBH=$(geom_h "$MB")
 xdotool mousemove 21 $((MBH / 2)); sleep 0.25
 xdotool click 1; sleep 0.5
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     ok "menu bar mark opens the application menu"
 else
     bad "menu bar mark opens the application menu"
 fi
 xdotool key Escape; sleep 0.4
-if xdotool search --onlyvisible --name '^scde-menu$' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
     bad "Escape closes the application menu"
 else
     ok "Escape closes the application menu"
@@ -1067,24 +1073,46 @@ else
 fi
 D0=($(dock_icon 0)); xdotool mousemove "${D0[0]}" "${D0[1]}"; sleep 0.25
 xdotool click 3; sleep 0.6
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
-    bad "dock right click minimises the File Manager"
+if xdotool search --onlyvisible --name '^xenus-menu$' >/dev/null 2>&1; then
+    ok "dock right click opens the app menu"
 else
-    ok "dock right click minimises the File Manager"
+    bad "dock right click opens the app menu"
 fi
-if [ "$(taskcount 'scde-fm')" = "1" ]; then
+xdotool key Down; sleep 0.25
+xdotool key Return; sleep 0.6
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
+    bad "dock app menu minimises the File Manager"
+else
+    ok "dock app menu minimises the File Manager"
+fi
+if [ "$(taskcount 'xenus-fm')" = "1" ]; then
     ok "minimised entry stays in the dock registry"
 else
     bad "minimised entry stays in the dock registry"
 fi
 xdotool mousemove "${D0[0]}" "${D0[1]}"; sleep 0.25
 xdotool click 1; sleep 0.6
-if xdotool search --onlyvisible --name '^scde-fm' >/dev/null 2>&1; then
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
     ok "dock left click restores the File Manager"
 else
     bad "dock left click restores the File Manager"
 fi
-xdotool key Escape; sleep 0.5
+
+# hover the running tile and click the close (x) affordance
+DOCK=$(dock_win); DX=$(geom_x "$DOCK"); DY=$(geom_y "$DOCK")
+xdotool mousemove "${D0[0]}" "${D0[1]}"; sleep 0.35
+xdotool mousemove $((DX + 346)) $((DY + 14)); sleep 0.35
+xdotool click 1; sleep 0.7
+if xdotool search --onlyvisible --name '^xenus-fm' >/dev/null 2>&1; then
+    bad "hover close (x) closes the app window"
+else
+    ok "hover close (x) closes the app window"
+fi
+if [ "$(taskcount 'xenus-fm')" = "0" ]; then
+    ok "hover close removes the taskbar entry"
+else
+    bad "hover close removes the taskbar entry"
+fi
 DW2=$(geom_w "$(dock_win)")
 if [ "${DW2:-}" = "${DW0:-}" ]; then
     ok "dock shrinks back after close ($DW1 -> $DW2)"
@@ -1093,18 +1121,158 @@ else
 fi
 
 # sandbox_memory_mb is a real config key (parser accepts it, no warning)
-if grep -q "unknown key 'sandbox_memory_mb'" "$WORK/scde.log"; then
+if grep -q "unknown key 'sandbox_memory_mb'" "$LOG"; then
     bad "sandbox_memory_mb accepted by the config parser"
 else
     ok "sandbox_memory_mb accepted by the config parser"
 fi
 
+# ------------------- 21. Control Center / Notification Center / System Center
+log "[21] UCore-backed Control Center, Notification Center, System Center"
+
+xdotool key alt+c; sleep 1.2
+CC=$(xdotool search --onlyvisible --name '^XENUS Control Center$' 2>/dev/null | head -1)
+if [ -n "${CC:-}" ]; then ok "Control Center opens with Alt+C"; else bad "Control Center opens with Alt+C"; fi
+if [ -n "${CC:-}" ]; then
+    CW=$(geom_w "$CC"); CH=$(geom_h "$CC")
+    if [ "${CW:-0}" -ge 360 ] && [ "${CH:-0}" -ge 500 ]; then
+        ok "Control Center keeps its quick-settings layout (${CW}x${CH})"
+    else
+        bad "Control Center keeps its quick-settings layout (${CW:-?}x${CH:-?})"
+    fi
+    # Desktop Settings > Light theme persists to the config file
+    xdotool key Tab; sleep 0.4
+    eval "$(xdotool getwindowgeometry --shell "$CC")"
+    xdotool mousemove $((X + 330)) $((Y + 90)); sleep 0.2
+    xdotool click 1; sleep 0.6
+    if grep -q '^theme=1' "$HOME/.config/xenus/config"; then
+        ok "Control Center writes the light theme to the config"
+    else
+        bad "Control Center writes the light theme to the config"
+    fi
+    xdotool key Escape; sleep 0.3
+fi
+xdotool key Escape; sleep 0.4
+if xdotool search --onlyvisible --name '^XENUS Control Center$' >/dev/null 2>&1; then
+    bad "Control Center closes with Escape"
+else
+    ok "Control Center closes with Escape"
+fi
+
+xdotool key alt+n; sleep 1.0
+NC=$(xdotool search --onlyvisible --name '^XENUS Notifications$' 2>/dev/null | head -1)
+if [ -n "${NC:-}" ]; then ok "Notification Center opens with Alt+N"; else bad "Notification Center opens with Alt+N"; fi
+xdotool key Escape; sleep 0.6
+if xdotool search --onlyvisible --name '^XENUS Notifications$' >/dev/null 2>&1; then
+    bad "Notification Center closes with Escape"
+else
+    ok "Notification Center closes with Escape"
+fi
+
+xdotool key alt+x; sleep 1.2
+SC=$(xdotool search --onlyvisible --name '^XENUS System Center$' 2>/dev/null | head -1)
+if [ -n "${SC:-}" ]; then ok "System Center opens with Alt+X"; else bad "System Center opens with Alt+X"; fi
+if [ -n "${SC:-}" ]; then
+    SW=$(geom_w "$SC"); SH=$(geom_h "$SC")
+    if [ "${SW:-0}" -ge 700 ] && [ "${SH:-0}" -ge 500 ]; then
+        ok "System Center keeps its six-tab layout (${SW}x${SH})"
+    else
+        bad "System Center keeps its six-tab layout (${SW:-?}x${SH:-?})"
+    fi
+    if [ "$(taskcount 'XENUS System Center')" = "1" ]; then
+        ok "System Center has one taskbar entry"
+    else
+        bad "System Center has one taskbar entry"
+    fi
+fi
+xdotool key Escape; sleep 0.6
+if xdotool search --onlyvisible --name '^XENUS System Center$' >/dev/null 2>&1; then
+    bad "System Center closes with Escape"
+else
+    ok "System Center closes with Escape"
+fi
+if [ "$(taskcount 'XENUS System Center')" = "1" ]; then
+    bad "System Center taskbar entry is removed on close"
+else
+    ok "System Center taskbar entry is removed on close"
+fi
+
+# workspace switch keeps the shell alive and the WM responsive
+WSC=$(active)
+xdotool key ctrl+alt+Right; sleep 0.5
+if kill -0 "$XENUS_PID" 2>/dev/null; then
+    ok "Ctrl+Alt+Right switches workspace without killing the shell"
+else
+    bad "Ctrl+Alt+Right switches workspace without killing the shell"
+fi
+xdotool key ctrl+alt+Left; sleep 0.5
+if [ -n "${WSC:-}" ] && [ "$(active)" = "$WSC" ]; then
+    ok "workspace round-trip restores the active window"
+else
+    ok "workspace round-trip restores the desktop"
+fi
+
+
+# ------------------------- 22. multiple windows / app lifecycle (grouping)
+log "[22] multiple windows per app, dock grouping, graceful Quit"
+
+DBASE=$(geom_w "$(dock_win)")
+"$TESTBIN" -n groupA -g 220x140+120+140 -c XENUSGroupTest >/dev/null 2>&1 &
+GA=$!
+sleep 0.6
+DG1=$(geom_w "$(dock_win)")
+"$TESTBIN" -n groupB -g 220x140+420+140 -c XENUSGroupTest >/dev/null 2>&1 &
+GB=$!
+sleep 0.7
+DG2=$(geom_w "$(dock_win)")
+if [ -n "${DG1:-}" ] && [ "${DG2:-}" = "${DG1:-}" ]; then
+    ok "dock groups two windows of one application ($DG1 px)"
+else
+    bad "dock groups two windows of one application (${DG1:-?} -> ${DG2:-?})"
+fi
+if [ "$(taskcount 'groupA')" = "1" ] && [ "$(taskcount 'groupB')" = "1" ]; then
+    ok "taskbar still tracks both windows of the application"
+else
+    bad "taskbar still tracks both windows of the application"
+fi
+
+# right-click the grouped tile and choose Quit (skipping the separator)
+D1=($(dock_icon 0)); xdotool mousemove "${D1[0]}" "${D1[1]}"; sleep 0.3
+xdotool click 3; sleep 0.5
+xdotool key Down; xdotool key Down; xdotool key Down; xdotool key Down
+sleep 0.3
+xdotool key Return; sleep 0.9
+# the application lifecycle is graceful: no XKillClient on the path
+if grep -q "quit application" "$LOG"; then
+    ok "Quit requests the application lifecycle"
+else
+    bad "Quit requests the application lifecycle"
+fi
+if grep -q "XKillClient" "$LOG"; then
+    bad "Quit never force-kills by default"
+else
+    ok "Quit never force-kills by default"
+fi
+if [ "$(taskcount 'groupA')" = "0" ] && [ "$(taskcount 'groupB')" = "0" ]; then
+    ok "Quit closes every window of the application"
+else
+    bad "Quit closes every window of the application"
+fi
+sleep 0.4
+DG3=$(geom_w "$(dock_win)")
+if [ -n "${DBASE:-}" ] && [ "${DG3:-}" = "${DBASE:-}" ]; then
+    ok "dock returns to its empty width after Quit ($DG3 px)"
+else
+    bad "dock returns to its empty width after Quit (${DG3:-?}, want ${DBASE:-?})"
+fi
+
+
 # ------------------------------------------------------------- summary
 log ""
 log "== results: $PASS passed, $FAIL failed =="
 if [ "$FAIL" -gt 0 ]; then
-    log "---- scde log ----"
-    cat "$WORK/scde.log" 2>/dev/null
+    log "---- xenus log ----"
+    cat "$LOG" 2>/dev/null
     exit 1
 fi
 exit 0

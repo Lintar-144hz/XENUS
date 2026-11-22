@@ -1,11 +1,11 @@
 /*
- * SCDE App API - top-level window creation and interaction.
+ * XENUS App API - top-level window creation and interaction.
  *
  * The API keeps its own Display connection and a fixed pool of windows, so
  * it never touches the window manager's state and never allocates.
  */
-#include <scde/event.h>
-#include <scde/window.h>
+#include <xenus/event.h>
+#include <xenus/window.h>
 
 #include "internal.h"
 
@@ -20,7 +20,7 @@
 #define WIN_POOL 8
 #define WIN_TITLE_LEN 128
 
-struct scde_window {
+struct xenus_window {
     int used;
     Window id;
     int x, y;
@@ -29,7 +29,7 @@ struct scde_window {
 };
 
 static Display *api_dpy;
-static struct scde_window win_pool[WIN_POOL];
+static struct xenus_window win_pool[WIN_POOL];
 static int handler_installed;
 static XErrorHandler chained_handler;      /* NULL = Xlib default */
 
@@ -43,27 +43,27 @@ static int api_xerror(Display *dpy, XErrorEvent *ev)
         return chained_handler(dpy, ev);
     msg[0] = '\0';
     XGetErrorText(dpy, ev->error_code, msg, sizeof(msg) - 1);
-    scde_logf(SCDE_LOG_WARN, "window: X error: %s", msg);
+    xenus_logf(XENUS_LOG_WARN, "window: X error: %s", msg);
     return 0;                            /* never abort the process */
 }
 
-int scde_api_open_display(void)
+int xenus_api_open_display(void)
 {
     if (api_dpy)
-        return SCDE_OK;
+        return XENUS_OK;
     api_dpy = XOpenDisplay(NULL);
     if (!api_dpy)
-        return SCDE_ERR_DISPLAY;
+        return XENUS_ERR_DISPLAY;
     if (!handler_installed) {
         /* keep whatever handler the host already installed (the window
            manager installs one) and only fall back to our own */
         chained_handler = XSetErrorHandler(api_xerror);
         handler_installed = 1;
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-void scde_api_close_display(void)
+void xenus_api_close_display(void)
 {
     if (!api_dpy)
         return;
@@ -72,14 +72,14 @@ void scde_api_close_display(void)
     api_dpy = NULL;
 }
 
-int scde_api_has_display(void)
+int xenus_api_has_display(void)
 {
     return api_dpy != NULL;
 }
 
 /* -------------------------------------------------------------- window -- */
 
-static struct scde_window *find_slot(void)
+static struct xenus_window *find_slot(void)
 {
     int i;
 
@@ -90,7 +90,7 @@ static struct scde_window *find_slot(void)
     return NULL;
 }
 
-static struct scde_window *window_of(Window id)
+static struct xenus_window *window_of(Window id)
 {
     int i;
 
@@ -103,54 +103,54 @@ static struct scde_window *window_of(Window id)
     return NULL;
 }
 
-static int check_win(const scde_window_t *w)
+static int check_win(const xenus_window_t *w)
 {
     if (!w || !w->used)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     if (!api_dpy)
-        return SCDE_ERR_DISPLAY;
-    return SCDE_OK;
+        return XENUS_ERR_DISPLAY;
+    return XENUS_OK;
 }
 
-int scde_window_create(const scde_window_attrs_t *attrs, scde_window_t **out)
+int xenus_window_create(const xenus_window_attrs_t *attrs, xenus_window_t **out)
 {
-    static const scde_window_attrs_t defaults = {
-        SCDE_WINDOW_AUTO, SCDE_WINDOW_AUTO, 640, 400,
-        "SCDE application", 0, 0x1c1f26UL
+    static const xenus_window_attrs_t defaults = {
+        XENUS_WINDOW_AUTO, XENUS_WINDOW_AUTO, 640, 400,
+        "XENUS application", 0, 0x1c1f26UL
     };
-    const scde_window_attrs_t *a = attrs ? attrs : &defaults;
+    const xenus_window_attrs_t *a = attrs ? attrs : &defaults;
     XSetWindowAttributes wa;
     XWindowAttributes got;
-    struct scde_window *w;
+    struct xenus_window *w;
     unsigned long mask;
     int pos_x = 0;
     int pos_y = 0;
     int st;
 
     if (!out)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     *out = NULL;
     if (a->width == 0 || a->height == 0)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
 
-    st = scde_api_open_display();
-    if (st != SCDE_OK)
+    st = xenus_api_open_display();
+    if (st != XENUS_OK)
         return st;
 
     w = find_slot();
     if (!w)
-        return SCDE_ERR_FULL;
+        return XENUS_ERR_FULL;
 
     memset(&wa, 0, sizeof(wa));
     wa.background_pixel = a->background ? a->background : 0x1c1f26UL;
     wa.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask |
                     ButtonPressMask | ButtonReleaseMask | StructureNotifyMask;
     mask = CWBackPixel | CWEventMask;
-    if (a->x != SCDE_WINDOW_AUTO) {
+    if (a->x != XENUS_WINDOW_AUTO) {
         pos_x = a->x;
         mask |= CWX;
     }
-    if (a->y != SCDE_WINDOW_AUTO) {
+    if (a->y != XENUS_WINDOW_AUTO) {
         pos_y = a->y;
         mask |= CWY;
     }
@@ -159,7 +159,7 @@ int scde_window_create(const scde_window_attrs_t *attrs, scde_window_t **out)
                           a->width, a->height, 0, CopyFromParent, InputOutput,
                           CopyFromParent, mask, &wa);
     if (w->id == None)
-        return SCDE_ERR;
+        return XENUS_ERR;
 
     w->used = 1;
     w->width = a->width;
@@ -170,8 +170,8 @@ int scde_window_create(const scde_window_attrs_t *attrs, scde_window_t **out)
         w->width = (unsigned int)got.width;
         w->height = (unsigned int)got.height;
     } else {
-        w->x = (a->x == SCDE_WINDOW_AUTO) ? 0 : a->x;
-        w->y = (a->y == SCDE_WINDOW_AUTO) ? 0 : a->y;
+        w->x = (a->x == XENUS_WINDOW_AUTO) ? 0 : a->x;
+        w->y = (a->y == XENUS_WINDOW_AUTO) ? 0 : a->y;
     }
 
     if (!a->override_redirect) {
@@ -182,14 +182,14 @@ int scde_window_create(const scde_window_attrs_t *attrs, scde_window_t **out)
         (void)wm_protocols;
     }
 
-    scde_window_set_title(w, a->title ? a->title : "SCDE application");
+    xenus_window_set_title(w, a->title ? a->title : "XENUS application");
     XFlush(api_dpy);
 
     *out = w;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-void scde_window_destroy(scde_window_t *w)
+void xenus_window_destroy(xenus_window_t *w)
 {
     if (!w || !w->used)
         return;
@@ -201,71 +201,71 @@ void scde_window_destroy(scde_window_t *w)
     memset(w, 0, sizeof(*w));
 }
 
-int scde_window_show(scde_window_t *w)
+int xenus_window_show(xenus_window_t *w)
 {
     int st = check_win(w);
 
-    if (st != SCDE_OK)
+    if (st != XENUS_OK)
         return st;
     XMapRaised(api_dpy, w->id);
     XFlush(api_dpy);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_window_hide(scde_window_t *w)
+int xenus_window_hide(xenus_window_t *w)
 {
     int st = check_win(w);
 
-    if (st != SCDE_OK)
+    if (st != XENUS_OK)
         return st;
     XUnmapWindow(api_dpy, w->id);
     XFlush(api_dpy);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_window_set_title(scde_window_t *w, const char *title)
+int xenus_window_set_title(xenus_window_t *w, const char *title)
 {
     int st = check_win(w);
 
-    if (st != SCDE_OK)
+    if (st != XENUS_OK)
         return st;
     if (!title)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     snprintf(w->title, sizeof(w->title), "%s", title);
     XStoreName(api_dpy, w->id, w->title);
     XFlush(api_dpy);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_window_set_size(scde_window_t *w, unsigned int width,
+int xenus_window_set_size(xenus_window_t *w, unsigned int width,
                          unsigned int height)
 {
     int st = check_win(w);
 
-    if (st != SCDE_OK)
+    if (st != XENUS_OK)
         return st;
     if (width == 0 || height == 0)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     XResizeWindow(api_dpy, w->id, width, height);
     w->width = width;
     w->height = height;
     XFlush(api_dpy);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_window_set_background(scde_window_t *w, unsigned long color)
+int xenus_window_set_background(xenus_window_t *w, unsigned long color)
 {
     int st = check_win(w);
 
-    if (st != SCDE_OK)
+    if (st != XENUS_OK)
         return st;
     XSetWindowBackground(api_dpy, w->id, color);
     XClearWindow(api_dpy, w->id);
     XFlush(api_dpy);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-unsigned long scde_window_id(const scde_window_t *w)
+unsigned long xenus_window_id(const xenus_window_t *w)
 {
     if (!w || !w->used)
         return 0;
@@ -274,23 +274,23 @@ unsigned long scde_window_id(const scde_window_t *w)
 
 /* ------------------------------------------------------- event mapping -- */
 
-static int translate(XEvent *xev, scde_window_t *target, scde_event_t *out)
+static int translate(XEvent *xev, xenus_window_t *target, xenus_event_t *out)
 {
     memset(out, 0, sizeof(*out));
     out->window = target;
-    out->time_ms = scde_event_now_ms();
+    out->time_ms = xenus_event_now_ms();
 
     switch (xev->type) {
     case Expose:
         if (xev->xexpose.count != 0)
             return 0;                       /* only the last one */
-        out->type = SCDE_EVENT_WINDOW_EXPOSE;
+        out->type = XENUS_EVENT_WINDOW_EXPOSE;
         out->width = xev->xexpose.width;
         out->height = xev->xexpose.height;
         out->code = (uint32_t)xev->xexpose.count;
         return 1;
     case ConfigureNotify:
-        out->type = SCDE_EVENT_WINDOW_CONFIGURE;
+        out->type = XENUS_EVENT_WINDOW_CONFIGURE;
         out->x = xev->xconfigure.x;
         out->y = xev->xconfigure.y;
         out->width = xev->xconfigure.width;
@@ -298,7 +298,7 @@ static int translate(XEvent *xev, scde_window_t *target, scde_event_t *out)
         return 1;
     case KeyPress:
     case KeyRelease:
-        out->type = SCDE_EVENT_WINDOW_KEY;
+        out->type = XENUS_EVENT_WINDOW_KEY;
         out->code = (uint32_t)XLookupKeysym(&xev->xkey, 0);
         out->state = xev->xkey.state;
         out->x = xev->xkey.x;
@@ -306,7 +306,7 @@ static int translate(XEvent *xev, scde_window_t *target, scde_event_t *out)
         return 1;
     case ButtonPress:
     case ButtonRelease:
-        out->type = SCDE_EVENT_WINDOW_BUTTON;
+        out->type = XENUS_EVENT_WINDOW_BUTTON;
         out->code = xev->xbutton.button;
         out->state = xev->xbutton.state;
         out->x = xev->xbutton.x;
@@ -316,7 +316,7 @@ static int translate(XEvent *xev, scde_window_t *target, scde_event_t *out)
         if ((Atom)xev->xclient.data.l[0] !=
             XInternAtom(api_dpy, "WM_DELETE_WINDOW", False))
             return 0;
-        out->type = SCDE_EVENT_WINDOW_CLOSE;
+        out->type = XENUS_EVENT_WINDOW_CLOSE;
         snprintf(out->text, sizeof(out->text), "wm-delete");
         return 1;
     default:
@@ -324,21 +324,21 @@ static int translate(XEvent *xev, scde_window_t *target, scde_event_t *out)
     }
 }
 
-int scde_window_process_events(scde_window_t *w, int max_events)
+int xenus_window_process_events(xenus_window_t *w, int max_events)
 {
     int posted = 0;
 
     if (!w || !w->used)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     if (!api_dpy)
-        return SCDE_ERR_DISPLAY;
+        return XENUS_ERR_DISPLAY;
     if (max_events <= 0)
         max_events = 64;
 
     while (posted < max_events && XPending(api_dpy) > 0) {
         XEvent xev;
-        scde_event_t ev;
-        scde_window_t *target;
+        xenus_event_t ev;
+        xenus_window_t *target;
 
         XNextEvent(api_dpy, &xev);
         target = window_of(xev.xany.window);
@@ -346,7 +346,7 @@ int scde_window_process_events(scde_window_t *w, int max_events)
             continue;
         if (translate(&xev, target, &ev) == 0)
             continue;
-        if (scde_event_post(&ev) == SCDE_OK)
+        if (xenus_event_post(&ev) == XENUS_OK)
             posted++;
     }
     return posted;

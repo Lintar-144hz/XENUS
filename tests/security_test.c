@@ -1,5 +1,5 @@
 /*
- * SCDE security boundary tests: decision matrix, capability gate, plugin
+ * XENUS security boundary tests: decision matrix, capability gate, plugin
  * trust gate, exec gate (fail-closed), sandbox tiers (seccomp/fs hiding),
  * resource limits, bait/mirage decoys, spawn end-to-end, audit consistency.
  * Non-destructive: everything lives in a mkdtemp sandbox under /tmp,
@@ -7,14 +7,14 @@
  *
  * usage: tests/security_test <example.so>
  */
-#include "../src/scde.h"                 /* Scde sc (spawn linkage) */
+#include "../src/xenus.h"                 /* Xenus sc (spawn linkage) */
 
-#include <scde/app.h>
-#include <scde/common.h>
-#include <scde/security.h>
-#include <scde/security_bait.h>
-#include <scde/security_mirage.h>
-#include <scde/security_resource.h>
+#include <xenus/app.h>
+#include <xenus/common.h>
+#include <xenus/security.h>
+#include <xenus/security_bait.h>
+#include <xenus/security_mirage.h>
+#include <xenus/security_resource.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -52,19 +52,19 @@ static int checks, fails;
     } while (0)
 
 /* required by src/util.c (spawn) */
-Scde sc;
+Xenus sc;
 
 static char root[256];             /* mkdtemp sandbox */
 static char payload[300];          /* known-bad script */
 static char marker_allow[300];
 static char marker_sb[300];
 
-static void res_init(scde_scan_result_t *r)
+static void res_init(xenus_scan_result_t *r)
 {
     memset(r, 0, sizeof(*r));
-    r->status = SCDE_THREAT_UNKNOWN;
-    r->trust = SCDE_TRUST_UNKNOWN;
-    r->hash_status = SCDE_HASH_SKIPPED;
+    r->status = XENUS_THREAT_UNKNOWN;
+    r->trust = XENUS_TRUST_UNKNOWN;
+    r->hash_status = XENUS_HASH_SKIPPED;
 }
 
 static int exists(const char *p)
@@ -123,7 +123,7 @@ static int nnp_status(void)       /* /proc NoNewPrivs, no extra headers */
 
 static int count_event(int event)
 {
-    return (int)scde_audit_total(event);
+    return (int)xenus_audit_total(event);
 }
 
 /* run fn() in a forked child, return its exit code (or -1 fork fail) */
@@ -147,23 +147,23 @@ static int child_run(int (*fn)(void))
 
 static void test_features(void)
 {
-    scde_security_features_t f;
+    xenus_security_features_t f;
 
-    CHECK_INT(scde_security_features(&f), SCDE_OK, "features()");
-    CHECK(scde_feature_state_name(f.kernel_enforcement) != NULL,
+    CHECK_INT(xenus_security_features(&f), XENUS_OK, "features()");
+    CHECK(xenus_feature_state_name(f.kernel_enforcement) != NULL,
           "kernel state name");
-    CHECK(scde_feature_state_name(f.sandbox) != NULL, "sandbox state name");
+    CHECK(xenus_feature_state_name(f.sandbox) != NULL, "sandbox state name");
     CHECK(f.policy_active, "policy gate present");
     CHECK(f.scanner_active, "scanner active (always-on)");
-    if (f.sandbox == SCDE_FEATURE_AVAILABLE)
-        CHECK(f.seccomp == SCDE_FEATURE_AVAILABLE,
+    if (f.sandbox == XENUS_FEATURE_AVAILABLE)
+        CHECK(f.seccomp == XENUS_FEATURE_AVAILABLE,
               "available sandbox implies seccomp");
-    if (f.sandbox == SCDE_FEATURE_UNAVAILABLE)
-        CHECK(f.seccomp != SCDE_FEATURE_AVAILABLE,
+    if (f.sandbox == XENUS_FEATURE_UNAVAILABLE)
+        CHECK(f.seccomp != XENUS_FEATURE_AVAILABLE,
               "no seccomp means no sandbox");
-    if (f.kernel_enforcement == SCDE_FEATURE_AVAILABLE)
-        CHECK(f.no_new_privs == SCDE_FEATURE_AVAILABLE &&
-              f.seccomp == SCDE_FEATURE_AVAILABLE,
+    if (f.kernel_enforcement == XENUS_FEATURE_AVAILABLE)
+        CHECK(f.no_new_privs == XENUS_FEATURE_AVAILABLE &&
+              f.seccomp == XENUS_FEATURE_AVAILABLE,
               "kernel enforcement = nnp + seccomp");
 }
 
@@ -171,97 +171,97 @@ static void test_features(void)
 
 static void test_decide(void)
 {
-    scde_scan_result_t r;
-    scde_decision_t d = SCDE_DECIDE_ALLOW;
-    scde_security_features_t f;
+    xenus_scan_result_t r;
+    xenus_decision_t d = XENUS_DECIDE_ALLOW;
+    xenus_security_features_t f;
 
-    scde_security_features(&f);
-
-    res_init(&r);
-    r.status = SCDE_THREAT_BLOCKED;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "blocked rc");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "blocked -> deny");
+    xenus_security_features(&f);
 
     res_init(&r);
-    r.status = SCDE_THREAT_MALICIOUS;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "malicious rc");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "malicious -> deny");
+    r.status = XENUS_THREAT_BLOCKED;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "blocked rc");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "blocked -> deny");
 
     res_init(&r);
-    r.trust = SCDE_TRUST_BLOCKED;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "trust-blocked rc");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "trust-blocked -> deny");
+    r.status = XENUS_THREAT_MALICIOUS;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "malicious rc");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "malicious -> deny");
 
     res_init(&r);
-    r.status = SCDE_THREAT_UNKNOWN;
-    r.trust = SCDE_TRUST_UNKNOWN;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "unknown rc");
-    CHECK_INT(d, SCDE_DECIDE_RESTRICT, "unknown trust -> restrict");
+    r.trust = XENUS_TRUST_BLOCKED;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "trust-blocked rc");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "trust-blocked -> deny");
 
     res_init(&r);
-    r.trust = SCDE_TRUST_TRUSTED;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "trusted rc");
-    CHECK_INT(d, SCDE_DECIDE_ALLOW, "trusted -> allow");
+    r.status = XENUS_THREAT_UNKNOWN;
+    r.trust = XENUS_TRUST_UNKNOWN;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "unknown rc");
+    CHECK_INT(d, XENUS_DECIDE_RESTRICT, "unknown trust -> restrict");
 
     res_init(&r);
-    r.trust = SCDE_TRUST_UNTRUSTED;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "untrusted rc");
-    CHECK_INT(d, f.sandbox == SCDE_FEATURE_UNAVAILABLE ? SCDE_DECIDE_DENY
-                                                       : SCDE_DECIDE_SANDBOX,
+    r.trust = XENUS_TRUST_TRUSTED;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "trusted rc");
+    CHECK_INT(d, XENUS_DECIDE_ALLOW, "trusted -> allow");
+
+    res_init(&r);
+    r.trust = XENUS_TRUST_UNTRUSTED;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "untrusted rc");
+    CHECK_INT(d, f.sandbox == XENUS_FEATURE_UNAVAILABLE ? XENUS_DECIDE_DENY
+                                                       : XENUS_DECIDE_SANDBOX,
               "untrusted -> sandbox (deny when unavailable)");
 
     res_init(&r);
-    r.status = SCDE_THREAT_SUSPICIOUS;
-    r.trust = SCDE_TRUST_UNTRUSTED;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "suspicious rc");
-    CHECK_INT(d, f.sandbox == SCDE_FEATURE_UNAVAILABLE ? SCDE_DECIDE_DENY
-                                                       : SCDE_DECIDE_SANDBOX,
+    r.status = XENUS_THREAT_SUSPICIOUS;
+    r.trust = XENUS_TRUST_UNTRUSTED;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "suspicious rc");
+    CHECK_INT(d, f.sandbox == XENUS_FEATURE_UNAVAILABLE ? XENUS_DECIDE_DENY
+                                                       : XENUS_DECIDE_SANDBOX,
               "suspicious -> sandbox (deny when unavailable)");
 
-    scde_policy_set(SCDE_POL_DENY_SUSPICIOUS, 1);
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "deny-susp rc");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "deny-suspicious policy -> deny");
-    scde_policy_set(SCDE_POL_DENY_SUSPICIOUS, 0);
+    xenus_policy_set(XENUS_POL_DENY_SUSPICIOUS, 1);
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "deny-susp rc");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "deny-suspicious policy -> deny");
+    xenus_policy_set(XENUS_POL_DENY_SUSPICIOUS, 0);
 
     res_init(&r);
     r.status = (int16_t)99;             /* unknown status */
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "bad-status rc");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "unknown status -> deny (fail-closed)");
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "bad-status rc");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "unknown status -> deny (fail-closed)");
 
-    d = SCDE_DECIDE_ALLOW;
-    CHECK_INT(scde_security_decide(NULL, &d), SCDE_ERR_ARG, "null rc");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "null -> fail-closed");
+    d = XENUS_DECIDE_ALLOW;
+    CHECK_INT(xenus_security_decide(NULL, &d), XENUS_ERR_ARG, "null rc");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "null -> fail-closed");
 }
 
 /* -------------------------------------------------------- capabilities -- */
 
 static void test_capabilities(void)
 {
-    scde_security_revoke("test:alpha", 0xffffffffu);
+    xenus_security_revoke("test:alpha", 0xffffffffu);
 
-    CHECK_INT(scde_security_grant("test:alpha",
-                                  SCDE_CAP_FS_READ | SCDE_CAP_CONFIG),
-              SCDE_OK, "grant read+config");
-    CHECK_INT(scde_security_check("test:alpha", SCDE_CAP_FS_READ), SCDE_OK,
+    CHECK_INT(xenus_security_grant("test:alpha",
+                                  XENUS_CAP_FS_READ | XENUS_CAP_CONFIG),
+              XENUS_OK, "grant read+config");
+    CHECK_INT(xenus_security_check("test:alpha", XENUS_CAP_FS_READ), XENUS_OK,
               "granted bit checks");
-    CHECK_INT(scde_security_check("test:alpha", SCDE_CAP_CONFIG), SCDE_OK,
+    CHECK_INT(xenus_security_check("test:alpha", XENUS_CAP_CONFIG), XENUS_OK,
               "second granted bit checks");
-    CHECK(scde_security_check("test:alpha", SCDE_CAP_FS_WRITE) != SCDE_OK,
+    CHECK(xenus_security_check("test:alpha", XENUS_CAP_FS_WRITE) != XENUS_OK,
           "write not granted");
-    CHECK(scde_security_check("test:alpha", SCDE_CAP_SPAWN) != SCDE_OK,
+    CHECK(xenus_security_check("test:alpha", XENUS_CAP_SPAWN) != XENUS_OK,
           "spawn never implicit");
-    CHECK(scde_security_check("test:alpha", SCDE_CAP_NET) != SCDE_OK,
+    CHECK(xenus_security_check("test:alpha", XENUS_CAP_NET) != XENUS_OK,
           "net never implicit");
-    CHECK(scde_security_check("test:alpha", SCDE_CAP_DEVICE) != SCDE_OK,
+    CHECK(xenus_security_check("test:alpha", XENUS_CAP_DEVICE) != XENUS_OK,
           "device never implicit");
-    CHECK(scde_security_check("test:alpha", SCDE_CAP_PLUGIN_LOAD) != SCDE_OK,
+    CHECK(xenus_security_check("test:alpha", XENUS_CAP_PLUGIN_LOAD) != XENUS_OK,
           "plugin.load never implicit");
-    CHECK(scde_security_check("nobody", SCDE_CAP_FS_READ) != SCDE_OK,
+    CHECK(xenus_security_check("nobody", XENUS_CAP_FS_READ) != XENUS_OK,
           "unknown subject denied");
 
-    CHECK_INT(scde_security_revoke("test:alpha", 0xffffffffu), SCDE_OK,
+    CHECK_INT(xenus_security_revoke("test:alpha", 0xffffffffu), XENUS_OK,
               "revoke all");
-    CHECK(scde_security_check("test:alpha", SCDE_CAP_FS_READ) != SCDE_OK,
+    CHECK(xenus_security_check("test:alpha", XENUS_CAP_FS_READ) != XENUS_OK,
           "revoked bit denied");
 }
 
@@ -269,13 +269,13 @@ static void test_capabilities(void)
 
 static void test_gate(void)
 {
-    scde_decision_t d = SCDE_DECIDE_ALLOW;
-    scde_scan_stats_t before, after;
+    xenus_decision_t d = XENUS_DECIDE_ALLOW;
+    xenus_scan_stats_t before, after;
     int bad_before;
 
-    CHECK_INT(scde_security_gate_exec(NULL, &d), SCDE_ERR_ARG, "gate null");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "gate null -> deny");
-    CHECK_INT(scde_security_gate_exec("", &d), SCDE_ERR_ARG, "gate empty");
+    CHECK_INT(xenus_security_gate_exec(NULL, &d), XENUS_ERR_ARG, "gate null");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "gate null -> deny");
+    CHECK_INT(xenus_security_gate_exec("", &d), XENUS_ERR_ARG, "gate empty");
 
     /* resolvable normal command: never DENY (heap realpath: a stack
      * buffer under PATH_MAX trips FORTIFY's __realpath_chk) */
@@ -285,28 +285,28 @@ static void test_gate(void)
         CHECK(rt != NULL, "realpath /bin/true");
         free(rt);
     }
-    d = SCDE_DECIDE_DENY;
-    CHECK_INT(scde_security_gate_exec("/bin/true", &d), SCDE_OK, "gate true");
-    CHECK(d != SCDE_DECIDE_DENY, "/bin/true not denied");
+    d = XENUS_DECIDE_DENY;
+    CHECK_INT(xenus_security_gate_exec("/bin/true", &d), XENUS_OK, "gate true");
+    CHECK(d != XENUS_DECIDE_DENY, "/bin/true not denied");
 
     /* unresolvable target: restricted fallback, audited */
-    bad_before = count_event(SCDE_AUDIT_POLICY_FALLBACK);
-    d = SCDE_DECIDE_ALLOW;
-    CHECK_INT(scde_security_gate_exec("scde-no-such-binary-xyz", &d), SCDE_OK,
+    bad_before = count_event(XENUS_AUDIT_POLICY_FALLBACK);
+    d = XENUS_DECIDE_ALLOW;
+    CHECK_INT(xenus_security_gate_exec("xenus-no-such-binary-xyz", &d), XENUS_OK,
               "gate missing");
-    CHECK_INT(d, SCDE_DECIDE_RESTRICT, "missing target -> restrict");
-    CHECK(count_event(SCDE_AUDIT_POLICY_FALLBACK) > bad_before,
+    CHECK_INT(d, XENUS_DECIDE_RESTRICT, "missing target -> restrict");
+    CHECK(count_event(XENUS_AUDIT_POLICY_FALLBACK) > bad_before,
           "fallback audited");
 
     /* known-bad hash: DENY + stats + audit */
-    scde_security_stats(&before);
-    bad_before = count_event(SCDE_AUDIT_PROCESS_BLOCKED);
-    d = SCDE_DECIDE_ALLOW;
-    CHECK_INT(scde_security_gate_exec(payload, &d), SCDE_OK, "gate bad");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "known-bad -> deny");
-    scde_security_stats(&after);
+    xenus_security_stats(&before);
+    bad_before = count_event(XENUS_AUDIT_PROCESS_BLOCKED);
+    d = XENUS_DECIDE_ALLOW;
+    CHECK_INT(xenus_security_gate_exec(payload, &d), XENUS_OK, "gate bad");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "known-bad -> deny");
+    xenus_security_stats(&after);
     CHECK(after.denied > before.denied, "denied stat incremented");
-    CHECK(count_event(SCDE_AUDIT_PROCESS_BLOCKED) > bad_before,
+    CHECK(count_event(XENUS_AUDIT_PROCESS_BLOCKED) > bad_before,
           "PROCESS_BLOCKED audited");
 }
 
@@ -314,7 +314,7 @@ static void test_gate(void)
 
 static void test_spawn(void)
 {
-    scde_scan_stats_t before, after;
+    xenus_scan_stats_t before, after;
     int blk_before;
     char allow_sh[300];
     char content[320];
@@ -330,15 +330,15 @@ static void test_spawn(void)
           "restricted spawn created marker");
 
     /* known-bad target never runs (fail-closed) */
-    scde_security_stats(&before);
-    blk_before = count_event(SCDE_AUDIT_PROCESS_BLOCKED);
+    xenus_security_stats(&before);
+    blk_before = count_event(XENUS_AUDIT_PROCESS_BLOCKED);
     unlink(marker_sb);
     spawn(payload);
     sleep_ms(400);
     CHECK(!exists(marker_sb), "blocked spawn created nothing");
-    scde_security_stats(&after);
+    xenus_security_stats(&after);
     CHECK(after.denied > before.denied, "spawn deny counted");
-    CHECK(count_event(SCDE_AUDIT_PROCESS_BLOCKED) > blk_before,
+    CHECK(count_event(XENUS_AUDIT_PROCESS_BLOCKED) > blk_before,
           "spawn deny audited");
 }
 
@@ -352,7 +352,7 @@ static int fn_restrict(void)
 
     if (getrlimit(RLIMIT_CPU, &cpu_before) != 0)
         return 128;                       /* cannot even probe: odd host */
-    if (scde_sandbox_apply(SCDE_SANDBOX_RESTRICT) != SCDE_OK)
+    if (xenus_sandbox_apply(XENUS_SANDBOX_RESTRICT) != XENUS_OK)
         return 1;
     if (nnp_status() != 1)
         rc |= 2;
@@ -371,7 +371,7 @@ static int fn_restrict(void)
     {
         struct rlimit rl;
 
-        /* SCDE imposes no CPU quota: the value stays exactly as found */
+        /* XENUS imposes no CPU quota: the value stays exactly as found */
         if (getrlimit(RLIMIT_CPU, &rl) != 0)
             rc |= 64;
         else if (rl.rlim_cur != cpu_before.rlim_cur ||
@@ -397,12 +397,12 @@ static int fn_restrict(void)
 
 static int fn_full(void)
 {
-    scde_security_features_t f;
+    xenus_security_features_t f;
     int rc = 0;
     int s;
 
-    scde_security_features(&f);
-    if (scde_sandbox_apply(SCDE_SANDBOX_FULL) != SCDE_OK)
+    xenus_security_features(&f);
+    if (xenus_sandbox_apply(XENUS_SANDBOX_FULL) != XENUS_OK)
         return 1;
     if (nnp_status() != 1)
         rc |= 2;
@@ -413,7 +413,7 @@ static int fn_full(void)
     }
     if (fork() >= 0)
         rc |= 8;                        /* fork must be denied */
-    if (f.fs == SCDE_FEATURE_AVAILABLE) {
+    if (f.fs == XENUS_FEATURE_AVAILABLE) {
         if (access("/etc/hosts", R_OK) == 0)
             rc |= 16;                   /* hidden behind tmpfs */
         if (access("/etc/resolv.conf", R_OK) == 0)
@@ -426,12 +426,12 @@ static int fn_full(void)
 
 static void test_sandbox(void)
 {
-    scde_security_features_t f;
+    xenus_security_features_t f;
 
-    scde_security_features(&f);
+    xenus_security_features(&f);
     CHECK_INT(child_run(fn_restrict), 0,
               "RESTRICT tier (nnp, net, fork, 3GiB ceiling, no cpu quota)");
-    if (f.sandbox == SCDE_FEATURE_UNAVAILABLE) {
+    if (f.sandbox == XENUS_FEATURE_UNAVAILABLE) {
         fprintf(stderr, "note: sandbox UNAVAILABLE, FULL tier skipped\n");
         return;
     }
@@ -465,8 +465,8 @@ static void test_plugin_gate(const char *example)
 {
     char *real_ex = NULL;
     char copy1[300], copy2[300];
-    scde_scan_result_t r;
-    scde_scan_stats_t before, after;
+    xenus_scan_result_t r;
+    xenus_scan_stats_t before, after;
 
     snprintf(copy1, sizeof(copy1), "%s/untrusted-copy.so", root);
     snprintf(copy2, sizeof(copy2), "%s/blocked-copy.so", root);
@@ -476,34 +476,34 @@ static void test_plugin_gate(const char *example)
     CHECK(real_ex != NULL, "realpath example");
 
     /* untrusted native code: refused in-process (TRUST_REQUIRED) */
-    scde_security_stats(&before);
+    xenus_security_stats(&before);
     memset(&r, 0, sizeof(r));
-    CHECK(scde_security_check_plugin(copy1, &r) != SCDE_OK,
+    CHECK(xenus_security_check_plugin(copy1, &r) != XENUS_OK,
           "untrusted plugin refused");
-    scde_security_stats(&after);
+    xenus_security_stats(&after);
     CHECK(after.rejected_plugins > before.rejected_plugins,
           "rejection counted");
 
     /* explicitly blocked: refused */
-    CHECK_INT(scde_trust_set(copy2, SCDE_TRUST_BLOCKED), SCDE_OK,
+    CHECK_INT(xenus_trust_set(copy2, XENUS_TRUST_BLOCKED), XENUS_OK,
               "trust blocked copy");
     memset(&r, 0, sizeof(r));
-    CHECK(scde_security_check_plugin(copy2, &r) != SCDE_OK,
+    CHECK(xenus_security_check_plugin(copy2, &r) != XENUS_OK,
           "blocked plugin refused");
 
     /* trusted: accepted */
-    CHECK_INT(scde_trust_set(real_ex, SCDE_TRUST_TRUSTED), SCDE_OK,
+    CHECK_INT(xenus_trust_set(real_ex, XENUS_TRUST_TRUSTED), XENUS_OK,
               "trust example");
     memset(&r, 0, sizeof(r));
-    CHECK_INT(scde_security_check_plugin(real_ex, &r), SCDE_OK,
+    CHECK_INT(xenus_security_check_plugin(real_ex, &r), XENUS_OK,
               "trusted plugin accepted");
-    CHECK(r.trust == SCDE_TRUST_TRUSTED, "result trust trusted");
+    CHECK(r.trust == XENUS_TRUST_TRUSTED, "result trust trusted");
 
     /* even trusted: known-bad content still refused */
-    CHECK_INT(scde_trust_set(payload, SCDE_TRUST_TRUSTED), SCDE_OK,
+    CHECK_INT(xenus_trust_set(payload, XENUS_TRUST_TRUSTED), XENUS_OK,
               "trust known-bad payload");
     memset(&r, 0, sizeof(r));
-    CHECK(scde_security_check_plugin(payload, &r) != SCDE_OK,
+    CHECK(xenus_security_check_plugin(payload, &r) != XENUS_OK,
           "known-bad refused despite trust");
     free(real_ex);
 }
@@ -514,29 +514,29 @@ static void test_audit(void)
 {
     int i, n;
     int found = 0;
-    scde_audit_entry_t e;
+    xenus_audit_entry_t e;
 
-    CHECK(scde_audit_count() > 0, "audit has entries");
-    n = scde_audit_count();
+    CHECK(xenus_audit_count() > 0, "audit has entries");
+    n = xenus_audit_count();
     for (i = 0; i < n; i++) {
-        if (scde_audit_get(i, &e) != SCDE_OK)
+        if (xenus_audit_get(i, &e) != XENUS_OK)
             continue;
-        if (e.event == SCDE_AUDIT_PROCESS_BLOCKED ||
-            e.event == SCDE_AUDIT_TRUST_REQUIRED ||
-            e.event == SCDE_AUDIT_POLICY_FALLBACK)
+        if (e.event == XENUS_AUDIT_PROCESS_BLOCKED ||
+            e.event == XENUS_AUDIT_TRUST_REQUIRED ||
+            e.event == XENUS_AUDIT_POLICY_FALLBACK)
             found++;
     }
     CHECK(found > 0, "gate events visible in ring");
-    for (i = SCDE_AUDIT_FILE_SCANNED; i < SCDE_AUDIT_EVENT_COUNT; i++) {
-        const char *nm = scde_audit_event_name(i);
+    for (i = XENUS_AUDIT_FILE_SCANNED; i < XENUS_AUDIT_EVENT_COUNT; i++) {
+        const char *nm = xenus_audit_event_name(i);
 
         CHECK(nm != NULL && strcmp(nm, "UNKNOWN") != 0, "event name known");
     }
-    CHECK(strcmp(scde_audit_event_name(0), "UNKNOWN") == 0,
+    CHECK(strcmp(xenus_audit_event_name(0), "UNKNOWN") == 0,
           "event 0 stays UNKNOWN");
-    CHECK_INT(scde_audit_total(SCDE_AUDIT_FILE_SCANNED) > 0, 1,
+    CHECK_INT(xenus_audit_total(XENUS_AUDIT_FILE_SCANNED) > 0, 1,
               "scan counter grows");
-    CHECK(scde_security_db_dir() != NULL, "db dir known");
+    CHECK(xenus_security_db_dir() != NULL, "db dir known");
 }
 
 /* -------------------------------------------------- trust lifecycle ---- */
@@ -544,41 +544,41 @@ static void test_audit(void)
 static void test_trust_lifecycle(void)
 {
     char subj[300];
-    scde_scan_result_t r;
-    scde_decision_t d;
+    xenus_scan_result_t r;
+    xenus_decision_t d;
 
     snprintf(subj, sizeof(subj), "%s/trust-me.sh", root);
     write_file(subj, "#!/bin/sh\nexit 0\n", 0755);
 
     /* default: unknown -> UNTRUSTED-family handling (restrict/sandbox) */
-    CHECK_INT(scde_trust_get(subj), SCDE_TRUST_UNKNOWN, "default unknown");
+    CHECK_INT(xenus_trust_get(subj), XENUS_TRUST_UNKNOWN, "default unknown");
     res_init(&r);
-    r.trust = SCDE_TRUST_UNKNOWN;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "unknown decide rc");
-    CHECK_INT(d, SCDE_DECIDE_RESTRICT, "unknown -> restrict");
+    r.trust = XENUS_TRUST_UNKNOWN;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "unknown decide rc");
+    CHECK_INT(d, XENUS_DECIDE_RESTRICT, "unknown -> restrict");
 
     /* trusted -> allow */
-    CHECK_INT(scde_trust_set(subj, SCDE_TRUST_TRUSTED), SCDE_OK,
+    CHECK_INT(xenus_trust_set(subj, XENUS_TRUST_TRUSTED), XENUS_OK,
               "trust trusted");
-    CHECK_INT(scde_trust_get(subj), SCDE_TRUST_TRUSTED, "trust read back");
+    CHECK_INT(xenus_trust_get(subj), XENUS_TRUST_TRUSTED, "trust read back");
     res_init(&r);
-    r.trust = SCDE_TRUST_TRUSTED;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "trusted decide rc");
-    CHECK_INT(d, SCDE_DECIDE_ALLOW, "trusted -> allow");
+    r.trust = XENUS_TRUST_TRUSTED;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "trusted decide rc");
+    CHECK_INT(d, XENUS_DECIDE_ALLOW, "trusted -> allow");
 
     /* blocked -> refuse */
-    CHECK_INT(scde_trust_set(subj, SCDE_TRUST_BLOCKED), SCDE_OK,
+    CHECK_INT(xenus_trust_set(subj, XENUS_TRUST_BLOCKED), XENUS_OK,
               "trust blocked");
     res_init(&r);
-    r.trust = SCDE_TRUST_BLOCKED;
-    CHECK_INT(scde_security_decide(&r, &d), SCDE_OK, "blocked decide rc");
-    CHECK_INT(d, SCDE_DECIDE_DENY, "blocked -> deny");
-    CHECK(scde_security_check_plugin(subj, NULL) != SCDE_OK,
+    r.trust = XENUS_TRUST_BLOCKED;
+    CHECK_INT(xenus_security_decide(&r, &d), XENUS_OK, "blocked decide rc");
+    CHECK_INT(d, XENUS_DECIDE_DENY, "blocked -> deny");
+    CHECK(xenus_security_check_plugin(subj, NULL) != XENUS_OK,
           "blocked plugin refused");
 
     /* forget -> back to unknown */
-    CHECK_INT(scde_trust_forget(subj), SCDE_OK, "trust forget");
-    CHECK_INT(scde_trust_get(subj), SCDE_TRUST_UNKNOWN,
+    CHECK_INT(xenus_trust_forget(subj), XENUS_OK, "trust forget");
+    CHECK_INT(xenus_trust_get(subj), XENUS_TRUST_UNKNOWN,
               "forgotten -> unknown");
 }
 
@@ -589,36 +589,36 @@ static void test_mediated_caps(void)
     char out[128];
     const char *enc;
 
-    scde_security_revoke("test:med", 0xffffffffu);
-    scde_security_revoke("test:med-ok", 0xffffffffu);
+    xenus_security_revoke("test:med", 0xffffffffu);
+    xenus_security_revoke("test:med-ok", 0xffffffffu);
 
     /* forbidden capability -> denied (fail-closed + audited) */
-    CHECK(scde_service_call_as("test:med", "notify", "t\nb", out,
-                               sizeof(out)) != SCDE_OK,
+    CHECK(xenus_service_call_as("test:med", "notify", "t\nb", out,
+                               sizeof(out)) != XENUS_OK,
           "notify without AUDIT denied");
-    CHECK(scde_service_call_as("test:med", "config.get", "k", out,
-                               sizeof(out)) != SCDE_OK,
+    CHECK(xenus_service_call_as("test:med", "config.get", "k", out,
+                               sizeof(out)) != XENUS_OK,
           "config.get without CONFIG denied");
-    CHECK_INT(scde_service_call_as("test:med", "version", NULL, out,
-                                   sizeof(out)), SCDE_OK,
+    CHECK_INT(xenus_service_call_as("test:med", "version", NULL, out,
+                                   sizeof(out)), XENUS_OK,
               "version is public");
 
     /* granted -> allowed */
-    CHECK_INT(scde_security_grant("test:med-ok", SCDE_CAP_AUDIT), SCDE_OK,
+    CHECK_INT(xenus_security_grant("test:med-ok", XENUS_CAP_AUDIT), XENUS_OK,
               "grant audit");
-    CHECK_INT(scde_service_call_as("test:med-ok", "notify", "hi\nthere",
-                                   out, sizeof(out)), SCDE_OK,
+    CHECK_INT(xenus_service_call_as("test:med-ok", "notify", "hi\nthere",
+                                   out, sizeof(out)), XENUS_OK,
               "notify with AUDIT allowed");
-    scde_security_revoke("test:med-ok", 0xffffffffu);
+    xenus_security_revoke("test:med-ok", 0xffffffffu);
 
     /* enforcement labels are honest (never claim kernel for userspace) */
-    enc = scde_capability_enforcement(SCDE_CAP_CONFIG);
+    enc = xenus_capability_enforcement(XENUS_CAP_CONFIG);
     CHECK(enc != NULL && (strcmp(enc, "BYPASSABLE") == 0 ||
                           strcmp(enc, "POLICY-LEVEL ONLY") == 0),
           "config is userspace-only");
-    enc = scde_capability_enforcement(SCDE_CAP_NET);
+    enc = xenus_capability_enforcement(XENUS_CAP_NET);
     CHECK(enc != NULL && *enc != '\0', "net has a label");
-    CHECK(strcmp(scde_capability_enforcement(0), "none") == 0,
+    CHECK(strcmp(xenus_capability_enforcement(0), "none") == 0,
           "none label");
 }
 
@@ -631,7 +631,7 @@ static int fn_limits_child(void)
 
     if (getrlimit(RLIMIT_CPU, &cpu_before) != 0)
         return 12;
-    if (scde_resource_apply() != SCDE_OK)
+    if (xenus_resource_apply() != XENUS_OK)
         return 1;
     if (getrlimit(RLIMIT_CORE, &rl) != 0)
         return 2;
@@ -649,7 +649,7 @@ static int fn_limits_child(void)
         rl.rlim_cur > (rlim_t)(3072UL * 1024UL * 1024UL))
         return 7;
 #endif
-    /* CPU: SCDE must not impose its own quota - the value is left
+    /* CPU: XENUS must not impose its own quota - the value is left
        exactly as the host had it (never lowered by us) */
     if (getrlimit(RLIMIT_CPU, &rl) != 0)
         return 8;
@@ -665,20 +665,20 @@ static int fn_limits_child(void)
 
 static void test_resources(void)
 {
-    scde_resource_limits_t lim;
+    xenus_resource_limits_t lim;
     char desc[128];
     pid_t victim;
     pid_t me;
 
-    scde_resource_defaults(&lim);
+    xenus_resource_defaults(&lim);
     CHECK(lim.ram_bytes == 3072ul * 1024ul * 1024ul,
           "default ram is the 3 GiB sandbox ceiling");
-    CHECK_INT(lim.cpu_seconds, 0, "default: no SCDE CPU quota");
+    CHECK_INT(lim.cpu_seconds, 0, "default: no XENUS CPU quota");
     CHECK(lim.nproc > 0, "default nproc set");
     CHECK(lim.nofile > 0, "default nofile set");
     CHECK(lim.fsize_bytes > 0, "default fsize set");
-    CHECK_INT(scde_resource_get(&lim), SCDE_OK, "resource get");
-    CHECK_INT(scde_resource_describe(desc, sizeof(desc)), SCDE_OK,
+    CHECK_INT(xenus_resource_get(&lim), XENUS_OK, "resource get");
+    CHECK_INT(xenus_resource_describe(desc, sizeof(desc)), XENUS_OK,
               "resource describe");
     CHECK(desc[0] != '\0', "describe non-empty");
     CHECK(strstr(desc, "3072") != NULL, "describe shows the 3 GiB ceiling");
@@ -687,11 +687,11 @@ static void test_resources(void)
     /* custom limits round-trip */
     lim.nofile = 64;
     lim.nproc = 16;
-    CHECK_INT(scde_resource_set(&lim), SCDE_OK, "resource set custom");
+    CHECK_INT(xenus_resource_set(&lim), XENUS_OK, "resource set custom");
     CHECK_INT(child_run(fn_limits_child), 0, "child limits applied");
-    CHECK_INT(scde_resource_set(NULL), SCDE_OK, "resource reset");
+    CHECK_INT(xenus_resource_set(NULL), XENUS_OK, "resource reset");
 
-    /* supervisor only kills the target: SCDE (this process) survives */
+    /* supervisor only kills the target: XENUS (this process) survives */
     me = getpid();
     victim = fork();
     if (victim == 0) {
@@ -703,17 +703,17 @@ static void test_resources(void)
     if (victim > 0) {
         int st = 0;
 
-        CHECK_INT(scde_resource_constrain(victim, 100, &st), 1,
+        CHECK_INT(xenus_resource_constrain(victim, 100, &st), 1,
                   "victim reaped via SIGTERM/SIGKILL");
         CHECK_INT(kill(victim, 0) == 0 && errno != ESRCH ? 1 : 0, 0,
                   "victim is gone");
         CHECK_INT((int)(getpid() == me), 1, "supervisor survived");
-        CHECK(kill(getpid(), 0) == 0, "SCDE alive after termination");
+        CHECK(kill(getpid(), 0) == 0, "XENUS alive after termination");
     }
     /* never touch ourselves or init */
-    CHECK_INT(scde_resource_constrain(getpid(), 50, NULL), 0,
+    CHECK_INT(xenus_resource_constrain(getpid(), 50, NULL), 0,
               "refuse self-kill");
-    CHECK_INT(scde_resource_constrain((pid_t)1, 50, NULL), 0,
+    CHECK_INT(xenus_resource_constrain((pid_t)1, 50, NULL), 0,
               "refuse pid 1");
 }
 
@@ -722,7 +722,7 @@ static void test_resources(void)
 static void test_bait_mirage(void)
 {
     char bdir[300];
-    char dpath[SCDE_BAIT_PATH_LEN];
+    char dpath[XENUS_BAIT_PATH_LEN];
     char mval[128];
     int acc_before, mod_before, del_before, exec_before;
     int mp_before, ma_before, esc_before;
@@ -730,30 +730,30 @@ static void test_bait_mirage(void)
     snprintf(bdir, sizeof(bdir), "%s/bait", root);
     mkdir(bdir, 0700);
 
-    CHECK_INT(scde_bait_init(bdir), SCDE_OK, "bait init");
-    CHECK(scde_bait_active(), "bait active");
-    CHECK_INT(scde_bait_create_defaults(), SCDE_OK, "bait defaults");
-    CHECK_INT(scde_bait_count(), 5, "five decoys");
-    CHECK_INT(scde_bait_verify_dummy(), SCDE_OK, "decoys are dummy-only");
+    CHECK_INT(xenus_bait_init(bdir), XENUS_OK, "bait init");
+    CHECK(xenus_bait_active(), "bait active");
+    CHECK_INT(xenus_bait_create_defaults(), XENUS_OK, "bait defaults");
+    CHECK_INT(xenus_bait_count(), 5, "five decoys");
+    CHECK_INT(xenus_bait_verify_dummy(), XENUS_OK, "decoys are dummy-only");
 
     /* explicit access telemetry */
-    CHECK_INT(scde_bait_path(0, dpath, sizeof(dpath)), SCDE_OK,
+    CHECK_INT(xenus_bait_path(0, dpath, sizeof(dpath)), XENUS_OK,
               "bait path 0");
-    acc_before = (int)scde_audit_total(SCDE_AUDIT_BAIT_ACCESSED);
-    CHECK_INT(scde_bait_report(dpath, "read", SCDE_TRUST_UNTRUSTED),
-              SCDE_OK, "bait report read");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_BAIT_ACCESSED) > acc_before,
+    acc_before = (int)xenus_audit_total(XENUS_AUDIT_BAIT_ACCESSED);
+    CHECK_INT(xenus_bait_report(dpath, "read", XENUS_TRUST_UNTRUSTED),
+              XENUS_OK, "bait report read");
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_BAIT_ACCESSED) > acc_before,
           "BAIT_ACCESSED audited");
     exec_before =
-        (int)scde_audit_total(SCDE_AUDIT_BAIT_EXECUTION_ATTEMPT);
-    CHECK_INT(scde_bait_report(dpath, "exec", SCDE_TRUST_UNTRUSTED),
-              SCDE_OK, "bait report exec");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_BAIT_EXECUTION_ATTEMPT) >
+        (int)xenus_audit_total(XENUS_AUDIT_BAIT_EXECUTION_ATTEMPT);
+    CHECK_INT(xenus_bait_report(dpath, "exec", XENUS_TRUST_UNTRUSTED),
+              XENUS_OK, "bait report exec");
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_BAIT_EXECUTION_ATTEMPT) >
           exec_before, "BAIT_EXECUTION_ATTEMPT audited");
-    CHECK(scde_bait_hits() >= 2, "bait hits counted");
+    CHECK(xenus_bait_hits() >= 2, "bait hits counted");
 
     /* modification detected by polling */
-    mod_before = (int)scde_audit_total(SCDE_AUDIT_BAIT_MODIFIED);
+    mod_before = (int)xenus_audit_total(XENUS_AUDIT_BAIT_MODIFIED);
     {
         int fd = open(dpath, O_WRONLY | O_APPEND);
 
@@ -763,16 +763,16 @@ static void test_bait_mirage(void)
         }
     }
     sleep_ms(50);
-    CHECK(scde_bait_check() > 0, "bait check found modification");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_BAIT_MODIFIED) > mod_before,
+    CHECK(xenus_bait_check() > 0, "bait check found modification");
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_BAIT_MODIFIED) > mod_before,
           "BAIT_MODIFIED audited");
 
     /* exec-bit attempt: detected and neutralised (back to non-exec) */
     chmod(dpath, 0755);
     exec_before =
-        (int)scde_audit_total(SCDE_AUDIT_BAIT_EXECUTION_ATTEMPT);
-    CHECK(scde_bait_check() > 0, "bait check found exec bit");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_BAIT_EXECUTION_ATTEMPT) >
+        (int)xenus_audit_total(XENUS_AUDIT_BAIT_EXECUTION_ATTEMPT);
+    CHECK(xenus_bait_check() > 0, "bait check found exec bit");
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_BAIT_EXECUTION_ATTEMPT) >
           exec_before, "exec-bit audited");
     {
         struct stat st;
@@ -782,10 +782,10 @@ static void test_bait_mirage(void)
     }
 
     /* deletion detected */
-    del_before = (int)scde_audit_total(SCDE_AUDIT_BAIT_DELETED);
+    del_before = (int)xenus_audit_total(XENUS_AUDIT_BAIT_DELETED);
     unlink(dpath);
-    CHECK(scde_bait_check() > 0, "bait check found deletion");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_BAIT_DELETED) > del_before,
+    CHECK(xenus_bait_check() > 0, "bait check found deletion");
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_BAIT_DELETED) > del_before,
           "BAIT_DELETED audited");
 
     /* symlink swap: a link planted where a decoy was must be reported but
@@ -805,14 +805,14 @@ static void test_bait_mirage(void)
             close(vfd);
         }
         chmod(victim, 0755);
-        CHECK_INT(scde_bait_path(1, dpath, sizeof(dpath)), SCDE_OK,
+        CHECK_INT(xenus_bait_path(1, dpath, sizeof(dpath)), XENUS_OK,
                   "second decoy path");
         unlink(dpath);
         CHECK_INT(symlink(victim, dpath), 0, "plant decoy symlink");
         mod2_before =
-            (int)scde_audit_total(SCDE_AUDIT_BAIT_MODIFIED);
-        CHECK(scde_bait_check() > 0, "bait check found symlink swap");
-        CHECK((int)scde_audit_total(SCDE_AUDIT_BAIT_MODIFIED) >
+            (int)xenus_audit_total(XENUS_AUDIT_BAIT_MODIFIED);
+        CHECK(xenus_bait_check() > 0, "bait check found symlink swap");
+        CHECK((int)xenus_audit_total(XENUS_AUDIT_BAIT_MODIFIED) >
               mod2_before, "symlink swap audited");
         CHECK(stat(victim, &vst) == 0 &&
               (vst.st_mode & 07777) == 0755,
@@ -834,44 +834,44 @@ static void test_bait_mirage(void)
 
     /* disabled bait is inert to polling (explicit exec reports still
      * fail-closed and audited, polling stays silent) */
-    CHECK_INT(scde_bait_disable(), SCDE_OK, "bait disable");
-    CHECK_INT(scde_bait_enabled(), 0, "bait off");
-    CHECK_INT(scde_bait_check(), 0, "disabled check silent");
-    CHECK_INT(scde_bait_enable(), SCDE_OK, "bait enable");
-    CHECK_INT(scde_bait_enabled(), 1, "bait on");
+    CHECK_INT(xenus_bait_disable(), XENUS_OK, "bait disable");
+    CHECK_INT(xenus_bait_enabled(), 0, "bait off");
+    CHECK_INT(xenus_bait_check(), 0, "disabled check silent");
+    CHECK_INT(xenus_bait_enable(), XENUS_OK, "bait enable");
+    CHECK_INT(xenus_bait_enabled(), 1, "bait on");
 
     /* mirage: every probe denied + audited, dummy value only */
-    CHECK_INT(scde_mirage_init(), SCDE_OK, "mirage init");
-    CHECK_INT(scde_mirage_create_defaults(), SCDE_OK, "mirage defaults");
-    CHECK_INT(scde_mirage_count(), 4, "four mirages");
-    mp_before = (int)scde_audit_total(SCDE_AUDIT_MIRAGE_PROBED);
-    CHECK(scde_mirage_probe("SCDE_DECOY_SESSION", "probe",
-                            SCDE_TRUST_UNTRUSTED) != SCDE_OK,
+    CHECK_INT(xenus_mirage_init(), XENUS_OK, "mirage init");
+    CHECK_INT(xenus_mirage_create_defaults(), XENUS_OK, "mirage defaults");
+    CHECK_INT(xenus_mirage_count(), 4, "four mirages");
+    mp_before = (int)xenus_audit_total(XENUS_AUDIT_MIRAGE_PROBED);
+    CHECK(xenus_mirage_probe("XENUS_DECOY_SESSION", "probe",
+                            XENUS_TRUST_UNTRUSTED) != XENUS_OK,
           "mirage probe denied");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_MIRAGE_PROBED) > mp_before,
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_MIRAGE_PROBED) > mp_before,
           "MIRAGE_PROBED audited");
-    ma_before = (int)scde_audit_total(SCDE_AUDIT_MIRAGE_ACCESSED);
+    ma_before = (int)xenus_audit_total(XENUS_AUDIT_MIRAGE_ACCESSED);
     memset(mval, 0, sizeof(mval));
-    CHECK(scde_mirage_lookup("decoy-gpu0", "read", SCDE_TRUST_UNTRUSTED,
-                             mval, sizeof(mval)) != SCDE_OK,
+    CHECK(xenus_mirage_lookup("decoy-gpu0", "read", XENUS_TRUST_UNTRUSTED,
+                             mval, sizeof(mval)) != XENUS_OK,
           "mirage read denied");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_MIRAGE_ACCESSED) > ma_before,
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_MIRAGE_ACCESSED) > ma_before,
           "MIRAGE_ACCESSED audited");
     CHECK(strstr(mval, "decoy") != NULL, "mirage value is dummy");
     CHECK(strstr(mval, "AKIA") == NULL, "mirage value has no secrets");
     esc_before =
-        (int)scde_audit_total(SCDE_AUDIT_MIRAGE_ESCAPE_ATTEMPT);
-    CHECK(scde_mirage_probe("decoy-admin-token", "escape",
-                            SCDE_TRUST_UNTRUSTED) != SCDE_OK,
+        (int)xenus_audit_total(XENUS_AUDIT_MIRAGE_ESCAPE_ATTEMPT);
+    CHECK(xenus_mirage_probe("decoy-admin-token", "escape",
+                            XENUS_TRUST_UNTRUSTED) != XENUS_OK,
           "mirage escape denied");
-    CHECK((int)scde_audit_total(SCDE_AUDIT_MIRAGE_ESCAPE_ATTEMPT) >
+    CHECK((int)xenus_audit_total(XENUS_AUDIT_MIRAGE_ESCAPE_ATTEMPT) >
           esc_before, "MIRAGE_ESCAPE_ATTEMPT audited");
-    CHECK(scde_mirage_probes() >= 3, "mirage probes counted");
+    CHECK(xenus_mirage_probes() >= 3, "mirage probes counted");
 
-    scde_mirage_shutdown();
-    CHECK_INT(scde_mirage_active(), 0, "mirage shut down");
-    scde_bait_shutdown();
-    CHECK_INT(scde_bait_active(), 0, "bait shut down");
+    xenus_mirage_shutdown();
+    CHECK_INT(xenus_mirage_active(), 0, "mirage shut down");
+    xenus_bait_shutdown();
+    CHECK_INT(xenus_bait_active(), 0, "bait shut down");
 }
 
 /* --------------------------------------------- symlink cache safety --- */
@@ -880,7 +880,7 @@ static void test_scan_symlink_cache(void)
 {
     char target[300];
     char link[300];
-    scde_scan_result_t r1, r2;
+    xenus_scan_result_t r1, r2;
 
     snprintf(target, sizeof(target), "%s/link-target.sh", root);
     snprintf(link, sizeof(link), "%s/link-scan.sh", root);
@@ -890,21 +890,21 @@ static void test_scan_symlink_cache(void)
 
     /* first scan through the link: fresh verdict, never served cached */
     memset(&r1, 0, sizeof(r1));
-    CHECK_INT(scde_scan_file(link, &r1), SCDE_OK, "scan via symlink");
-    CHECK((r1.flags & SCDE_SCANFLAG_CACHED) == 0,
+    CHECK_INT(xenus_scan_file(link, &r1), XENUS_OK, "scan via symlink");
+    CHECK((r1.flags & XENUS_SCANFLAG_CACHED) == 0,
           "symlink scan never cached");
-    CHECK(r1.status != SCDE_THREAT_BLOCKED, "safe target not blocked");
+    CHECK(r1.status != XENUS_THREAT_BLOCKED, "safe target not blocked");
 
     /* swap the target content in place (the link itself never changes):
        a rescan must see the new content, not a stale cached verdict */
     write_file(target, "#!/bin/sh\ntouch /tmp/pwned\nrm -rf /\n", 0755);
     memset(&r2, 0, sizeof(r2));
-    CHECK_INT(scde_scan_file(link, &r2), SCDE_OK, "rescan via symlink");
-    CHECK((r2.flags & SCDE_SCANFLAG_CACHED) == 0,
+    CHECK_INT(xenus_scan_file(link, &r2), XENUS_OK, "rescan via symlink");
+    CHECK((r2.flags & XENUS_SCANFLAG_CACHED) == 0,
           "symlink rescan never cached");
     CHECK(r2.risk > r1.risk, "swapped target raises risk through symlink");
-    CHECK(r2.status == SCDE_THREAT_MALICIOUS ||
-          r2.status == SCDE_THREAT_BLOCKED,
+    CHECK(r2.status == XENUS_THREAT_MALICIOUS ||
+          r2.status == XENUS_THREAT_BLOCKED,
           "destructive target flagged through symlink");
     unlink(link);
     unlink(target);
@@ -918,7 +918,7 @@ int main(int argc, char **argv)
     char hashes[340];
     char content[512];
     char hex[65];
-    scde_scan_result_t r;
+    xenus_scan_result_t r;
 
     if (argc < 2) {
         fprintf(stderr, "usage: %s <example.so>\n", argv[0]);
@@ -926,15 +926,15 @@ int main(int argc, char **argv)
     }
     sc.lock_fd = -1;                    /* spawn closes >=0 fds only */
 
-    snprintf(root, sizeof(root), "/tmp/scde-secXXXXXX");
+    snprintf(root, sizeof(root), "/tmp/xenus-secXXXXXX");
     if (!mkdtemp(root)) {
         perror("mkdtemp");
         return 2;
     }
     snprintf(dbdir, sizeof(dbdir), "%s/db", root);
     mkdir(dbdir, 0755);
-    setenv("SCDE_SECURITY_DIR", dbdir, 1);
-    setenv("SCDE_SCAN_MODE", "always-on", 1);
+    setenv("XENUS_SECURITY_DIR", dbdir, 1);
+    setenv("XENUS_SCAN_MODE", "always-on", 1);
 
     snprintf(payload, sizeof(payload), "%s/payload.sh", root);
     snprintf(marker_allow, sizeof(marker_allow), "%s/marker_allow", root);
@@ -943,24 +943,24 @@ int main(int argc, char **argv)
              "#!/bin/sh\ntouch %s\n", marker_sb);
     write_file(payload, content, 0755);
 
-    CHECK_INT(scde_security_init(dbdir), SCDE_OK, "security init");
+    CHECK_INT(xenus_security_init(dbdir), XENUS_OK, "security init");
 
     /* known-bad database: hash of the payload script */
-    CHECK_INT(scde_hash_file(payload, hex), SCDE_OK, "hash payload");
+    CHECK_INT(xenus_hash_file(payload, hex), XENUS_OK, "hash payload");
     snprintf(hashes, sizeof(hashes), "%s/hashes.db", dbdir);
     {
         char line[160];
 
         snprintf(line, sizeof(line),
-                 "# scde security\n%s  security-test\n", hex);
+                 "# xenus security\n%s  security-test\n", hex);
         write_file(hashes, line, 0644);
     }
-    CHECK_INT(scde_security_init(dbdir), SCDE_OK, "security re-init (db)");
+    CHECK_INT(xenus_security_init(dbdir), XENUS_OK, "security re-init (db)");
 
     {
         int rules = 0, hashes_n = 0, trusted = 0;
 
-        scde_security_db_info(&rules, &hashes_n, &trusted);
+        xenus_security_db_info(&rules, &hashes_n, &trusted);
         fprintf(stderr, "DB INFO: rules=%d hashes=%d trusted=%d\\n",
                rules, hashes_n, trusted);
     }
@@ -971,13 +971,13 @@ int main(int argc, char **argv)
     test_trust_lifecycle();
 
     {
-        scde_app_info_t info;
+        xenus_app_info_t info;
 
         memset(&info, 0, sizeof(info));
         info.name = "security-test";
         info.version = "1.0";
-        if (scde_app_init(&info) != SCDE_OK &&
-            !scde_app_is_running()) {
+        if (xenus_app_init(&info) != XENUS_OK &&
+            !xenus_app_is_running()) {
             CHECK(0, "app init for mediated services");
         } else {
             test_mediated_caps();
@@ -986,9 +986,9 @@ int main(int argc, char **argv)
 
     /* scanner really flags the known-bad payload */
     memset(&r, 0, sizeof(r));
-    CHECK_INT(scde_scan_file(payload, &r), SCDE_OK, "scan payload");
-    CHECK_INT(r.status, SCDE_THREAT_BLOCKED, "known-bad scanned blocked");
-    CHECK_INT(r.hash_status, SCDE_HASH_KNOWN_BAD, "known-bad hash status");
+    CHECK_INT(xenus_scan_file(payload, &r), XENUS_OK, "scan payload");
+    CHECK_INT(r.status, XENUS_THREAT_BLOCKED, "known-bad scanned blocked");
+    CHECK_INT(r.hash_status, XENUS_HASH_KNOWN_BAD, "known-bad hash status");
 
     test_scan_symlink_cache();
     test_gate();
@@ -998,18 +998,18 @@ int main(int argc, char **argv)
     test_bait_mirage();
     test_plugin_gate(argv[1]);
     test_audit();
-    scde_app_shutdown();
+    xenus_app_shutdown();
 
     {
-        scde_security_features_t f;
+        xenus_security_features_t f;
 
-        scde_security_features(&f);
+        xenus_security_features(&f);
         printf("environment: kernel=%s sandbox=%s fs=%s seccomp=%s "
                "proot=%d\n",
-               scde_feature_state_name(f.kernel_enforcement),
-               scde_feature_state_name(f.sandbox),
-               scde_feature_state_name(f.fs),
-               scde_feature_state_name(f.seccomp), f.proot);
+               xenus_feature_state_name(f.kernel_enforcement),
+               xenus_feature_state_name(f.sandbox),
+               xenus_feature_state_name(f.fs),
+               xenus_feature_state_name(f.seccomp), f.proot);
     }
     printf("security tests: %d checks, %d failures\n", checks, fails);
 

@@ -1,8 +1,8 @@
-# SCDE sample configuration - copy to ~/.config/scde/config
+# XENUS sample configuration - copy to ~/.config/xenus/config
 # format: key=value   (lines starting with # are comments)
 
 # ---------------------------------------------------------------- shell
-# SCDE Harbor: a slim menu bar is always pinned to the top edge and a
+# XENUS Harbor: a slim menu bar is always pinned to the top edge and a
 # floating dock sits centred above the bottom edge.  The legacy
 # panel=bottom/top key is accepted but ignored.
 panel_height=28
@@ -15,6 +15,14 @@ title_height=28
 focus_follows_mouse=1
 
 # ---------------------------------------------------------------- desktop
+# 0 = dark (default graphite), 1 = light paper surfaces.  Switch live from
+# Control Center > Desktop Settings; the key is rewritten in place.
+theme=0
+# 0 = Harbor blue, 1 = silver, 2 = graphite
+accent=0
+# subtle shell motion (0 = off)
+animations=1
+
 # macOS-inspired dark theme: graphite surfaces, soft white text and
 # system blue as the single accent.
 background=#0b0c10
@@ -56,7 +64,7 @@ menu_selected=#0a84ff
 # ------------------------------------------------- sandbox resource limits
 # RAM ceiling per sandboxed process (MiB).  3072 MiB = 3 GiB.
 # Enforced by the kernel (RLIMIT_AS in the child before exec); an
-# existing stricter hard limit is kept and never raised.  SCDE imposes
+# existing stricter hard limit is kept and never raised.  XENUS imposes
 # no CPU quota of its own - the host scheduler decides.
 sandbox_memory_mb=3072
 

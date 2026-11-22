@@ -1,5 +1,5 @@
 /*
- * SCDE Security Center - the built-in security application window.
+ * XENUS Security Center - the built-in security application window.
  *
  * Override-redirect like fm.c/msgbox.c (self-drawn title bar, no client
  * decoration).  Sections: protection mode + stats, file scanner with
@@ -7,14 +7,16 @@
  * from the launcher ("Security Center") or the tray shield; never by
  * itself at startup so task button positions stay stable.
  */
-#include "scde.h"
+#include "xenus.h"
+#include <X11/keysym.h>
+#include <xenus/ucore.h>
 
-#include <scde/event.h>
-#include <scde/plugin.h>
-#include <scde/security.h>
-#include <scde/security_bait.h>
-#include <scde/security_mirage.h>
-#include <scde/security_resource.h>
+#include <xenus/event.h>
+#include <xenus/plugin.h>
+#include <xenus/security.h>
+#include <xenus/security_bait.h>
+#include <xenus/security_mirage.h>
+#include <xenus/security_resource.h>
 
 #include <dirent.h>
 #include <stdint.h>
@@ -24,14 +26,14 @@
 #include <sys/stat.h>
 
 #define SG_W 600
-#define SG_H 640
+#define SG_H 720
 #define SG_TITLE 30
 #define SG_PAD 10
-#define SG_LOG_Y 522
+#define SG_LOG_Y 600
 #define SG_LOG_ROW 16
 #define SG_LOG_ROWS 6
 #define SG_SCAN_CAP 32
-#define SG_MAX_BTNS 20
+#define SG_MAX_BTNS 24
 
 /* muted Harbor status tones: sage / amber / clay, never neon */
 #define SG_OK   0x7fb08aUL
@@ -53,11 +55,15 @@ static int sg_hover = -1;
 static int sg_hover_light = -1;
 static int sg_log_off;
 static char sg_scan_status[196] = "choose a target to scan";
+static char sg_auth_password[128];
+static char sg_auth_confirm[128];
+static char sg_auth_status[128] = "Create a password to enable session lock";
+static int sg_auth_focus;
 
 /* internal monotonic clock shared with the audit log */
-uint32_t scde_event_now_ms(void);
+uint32_t xenus_event_now_ms(void);
 
-static const char *pol_names[SCDE_POL_COUNT] = {
+static const char *pol_names[XENUS_POL_COUNT] = {
     "Allow untrusted plugins",
     "Block known-bad hashes",
     "Deny suspicious files",
@@ -66,6 +72,57 @@ static const char *pol_names[SCDE_POL_COUNT] = {
 };
 
 static void sg_draw(void);
+static void sg_wipe(char *buf, size_t len);
+
+static void sg_auth_remove(void)
+{
+    if (!sg_auth_password[0]) {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Enter current password first");
+    } else if (xenus_auth_disable(sg_auth_password) == 0) {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Password protection disabled");
+        sg_wipe(sg_auth_password, sizeof(sg_auth_password));
+        sg_wipe(sg_auth_confirm, sizeof(sg_auth_confirm));
+        sg_auth_focus = 0;
+    } else {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Incorrect password - not removed");
+        sg_wipe(sg_auth_password, sizeof(sg_auth_password));
+    }
+    sg_draw();
+}
+
+static void sg_wipe(char *buf, size_t len)
+{
+    volatile unsigned char *p = (volatile unsigned char *)buf;
+    while (len--)
+        *p++ = 0;
+}
+
+static void sg_auth_submit(void)
+{
+    if (xenus_auth_enabled()) {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Password is already enabled");
+    } else if (!sg_auth_password[0]) {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Enter a password first");
+    } else if (strcmp(sg_auth_password, sg_auth_confirm) != 0) {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Passwords do not match");
+    } else if (xenus_auth_set_password(sg_auth_password) == 0) {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Password saved - session lock enabled");
+        sg_wipe(sg_auth_password, sizeof(sg_auth_password));
+        sg_wipe(sg_auth_confirm, sizeof(sg_auth_confirm));
+        sg_auth_focus = 0;
+    } else {
+        snprintf(sg_auth_status, sizeof(sg_auth_status),
+                 "Could not save password");
+    }
+    sg_draw();
+}
 
 /* --------------------------------------------------------------- layout -- */
 
@@ -133,9 +190,9 @@ static void sg_scan_dir(const char *dir, const char *suffix, int cap)
     if (!d)
         return;
     while ((e = readdir(d)) != NULL && sg_acc.count < cap) {
-        char path[SCDE_PATH_MAX];
+        char path[XENUS_PATH_MAX];
         struct stat st;
-        scde_scan_result_t r;
+        xenus_scan_result_t r;
         size_t len;
 
         if (e->d_name[0] == '.')
@@ -149,10 +206,10 @@ static void sg_scan_dir(const char *dir, const char *suffix, int cap)
         snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
         if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode))
             continue;
-        if (scde_scan_file(path, &r) != SCDE_OK)
+        if (xenus_scan_file(path, &r) != XENUS_OK)
             continue;
         sg_acc.count++;
-        if ((int)r.status >= SCDE_THREAT_SUSPICIOUS)
+        if ((int)r.status >= XENUS_THREAT_SUSPICIOUS)
             sg_acc.threats++;
         if (r.risk > sg_acc.worst) {
             sg_acc.worst = r.risk;
@@ -181,14 +238,14 @@ static void sg_run_scan(int id)
     char dir[512];
 
     memset(&sg_acc, 0, sizeof(sg_acc));
-    if (scde_security_get_scan_mode() == SCDE_SCAN_OFF) {
+    if (xenus_security_get_scan_mode() == XENUS_SCAN_OFF) {
         snprintf(sg_scan_status, sizeof(sg_scan_status),
                  "scanner is off - switch protection on first");
         sg_draw();
         return;
     }
     if (id == 20) {                        /* plugin directories */
-        const char *p = scde_plugins_search_path();
+        const char *p = xenus_plugins_search_path();
 
         while (*p && sg_acc.count < SG_SCAN_CAP) {
             const char *sep = strchr(p, ':');
@@ -216,13 +273,13 @@ static void sg_run_scan(int id)
 
 static void sg_set_mode(int id)
 {
-    scde_scan_mode_t m = id == 10 ? SCDE_SCAN_ALWAYS_ON
-                       : id == 11 ? SCDE_SCAN_PASSIVE
-                                  : SCDE_SCAN_OFF;
+    xenus_scan_mode_t m = id == 10 ? XENUS_SCAN_ALWAYS_ON
+                       : id == 11 ? XENUS_SCAN_PASSIVE
+                                  : XENUS_SCAN_OFF;
 
-    scde_security_set_scan_mode(m);
-    if (m == SCDE_SCAN_ALWAYS_ON)
-        scde_security_watch_defaults();
+    xenus_security_set_scan_mode(m);
+    if (m == XENUS_SCAN_ALWAYS_ON)
+        xenus_security_watch_defaults();
     panel_update();                        /* tray shield colour */
     sg_draw();
 }
@@ -232,26 +289,26 @@ static void sg_set_mode(int id)
  * decoys inert but on disk until shutdown. */
 static void sg_toggle_bait(void)
 {
-    if (!scde_bait_active()) {
-        if (scde_bait_init(NULL) == SCDE_OK)
-            scde_bait_create_defaults();
-    } else if (scde_bait_enabled()) {
-        scde_bait_disable();
+    if (!xenus_bait_active()) {
+        if (xenus_bait_init(NULL) == XENUS_OK)
+            xenus_bait_create_defaults();
+    } else if (xenus_bait_enabled()) {
+        xenus_bait_disable();
     } else {
-        scde_bait_enable();
+        xenus_bait_enable();
     }
     sg_draw();
 }
 
 static void sg_toggle_mirage(void)
 {
-    if (!scde_mirage_active()) {
-        if (scde_mirage_init() == SCDE_OK)
-            scde_mirage_create_defaults();
-    } else if (scde_mirage_enabled()) {
-        scde_mirage_disable();
+    if (!xenus_mirage_active()) {
+        if (xenus_mirage_init() == XENUS_OK)
+            xenus_mirage_create_defaults();
+    } else if (xenus_mirage_enabled()) {
+        xenus_mirage_disable();
     } else {
-        scde_mirage_enable();
+        xenus_mirage_enable();
     }
     sg_draw();
 }
@@ -261,30 +318,30 @@ static void sg_toggle_mirage(void)
 static const char *sg_prefix(int event)
 {
     switch (event) {
-    case SCDE_AUDIT_BAIT_CREATED:
-    case SCDE_AUDIT_BAIT_ACCESSED:
-    case SCDE_AUDIT_BAIT_MODIFIED:
-    case SCDE_AUDIT_BAIT_DELETED:
-    case SCDE_AUDIT_BAIT_EXECUTION_ATTEMPT:
-    case SCDE_AUDIT_BAIT_PERMISSION_DENIED:
+    case XENUS_AUDIT_BAIT_CREATED:
+    case XENUS_AUDIT_BAIT_ACCESSED:
+    case XENUS_AUDIT_BAIT_MODIFIED:
+    case XENUS_AUDIT_BAIT_DELETED:
+    case XENUS_AUDIT_BAIT_EXECUTION_ATTEMPT:
+    case XENUS_AUDIT_BAIT_PERMISSION_DENIED:
         return "[BAIT]";
-    case SCDE_AUDIT_MIRAGE_CREATED:
-    case SCDE_AUDIT_MIRAGE_PROBED:
-    case SCDE_AUDIT_MIRAGE_ACCESSED:
-    case SCDE_AUDIT_MIRAGE_MODIFIED:
-    case SCDE_AUDIT_MIRAGE_ESCAPE_ATTEMPT:
+    case XENUS_AUDIT_MIRAGE_CREATED:
+    case XENUS_AUDIT_MIRAGE_PROBED:
+    case XENUS_AUDIT_MIRAGE_ACCESSED:
+    case XENUS_AUDIT_MIRAGE_MODIFIED:
+    case XENUS_AUDIT_MIRAGE_ESCAPE_ATTEMPT:
         return "[MIRAGE]";
-    case SCDE_AUDIT_SANDBOX_CREATED:
-    case SCDE_AUDIT_SANDBOX_FAILED:
-    case SCDE_AUDIT_PROCESS_RESTRICTED:
-    case SCDE_AUDIT_PROCESS_BLOCKED:
+    case XENUS_AUDIT_SANDBOX_CREATED:
+    case XENUS_AUDIT_SANDBOX_FAILED:
+    case XENUS_AUDIT_PROCESS_RESTRICTED:
+    case XENUS_AUDIT_PROCESS_BLOCKED:
         return "[SANDBOX]";
-    case SCDE_AUDIT_CAPABILITY_GRANTED:
-    case SCDE_AUDIT_CAPABILITY_DENIED:
-    case SCDE_AUDIT_POLICY_DENIED:
-    case SCDE_AUDIT_TRUST_REQUIRED:
-    case SCDE_AUDIT_POLICY_FALLBACK:
-    case SCDE_AUDIT_SECURITY_FEATURE_UNAVAILABLE:
+    case XENUS_AUDIT_CAPABILITY_GRANTED:
+    case XENUS_AUDIT_CAPABILITY_DENIED:
+    case XENUS_AUDIT_POLICY_DENIED:
+    case XENUS_AUDIT_TRUST_REQUIRED:
+    case XENUS_AUDIT_POLICY_FALLBACK:
+    case XENUS_AUDIT_SECURITY_FEATURE_UNAVAILABLE:
         return "[POLICY]";
     default:
         return "[SCAN]";
@@ -295,8 +352,8 @@ static const char *sg_prefix(int event)
 
 static void sg_draw(void)
 {
-    scde_scan_stats_t st;
-    scde_scan_mode_t mode;
+    xenus_scan_stats_t st;
+    xenus_scan_mode_t mode;
     int rules = 0, hashes = 0, trusted = 0;
     int watch_on;
     int i;
@@ -307,7 +364,8 @@ static void sg_draw(void)
     const int det_y = 174, det_h = 78;
     const int scan_y = 260, scan_h = 80;
     const int perm_y = 348, perm_h = 134;
-    const int log_y = 490, log_h = 140;
+    const int auth_y = 490, auth_h = 70;
+    const int log_y = 568, log_h = 140;
     const int cx0 = SG_PAD + 10;
     const int cx1 = SG_W - SG_PAD - 10;
 
@@ -334,21 +392,21 @@ static void sg_draw(void)
                        cfg.col_title_fg, "Security");
     }
 
-    mode = scde_security_get_scan_mode();
-    watch_on = scde_security_watch_fd() >= 0;
+    mode = xenus_security_get_scan_mode();
+    watch_on = xenus_security_watch_fd() >= 0;
 
     /* protection card: segmented mode + live status lines */
     sg_card(prot_y, prot_h);
     sg_section(prot_y + 4, "Protection");
     {
         /* status pill, top right of the card: calm dot + mode + watcher */
-        unsigned long mc = mode == SCDE_SCAN_ALWAYS_ON ? SG_OK
-                         : mode == SCDE_SCAN_PASSIVE  ? SG_WARN
+        unsigned long mc = mode == XENUS_SCAN_ALWAYS_ON ? SG_OK
+                         : mode == XENUS_SCAN_PASSIVE  ? SG_WARN
                                                       : cfg.col_title_fg_inactive;
         char pill[96];
         int pw;
 
-        snprintf(pill, sizeof(pill), "%s  ·  watcher %s",
+        snprintf(pill, sizeof(pill), "%s  -  watcher %s",
                  mode_names[(int)mode], watch_on ? "active" : "off");
         pw = text_width(pill) + 14;
         XSetForeground(sc.dpy, sc.gc, mc);
@@ -365,7 +423,7 @@ static void sg_draw(void)
             sg_paint_btn(&sg_btns[i], (sg_btns[i].id - 10) == (int)mode,
                          sg_hover == i);
 
-    scde_security_stats(&st);
+    xenus_security_stats(&st);
     snprintf(buf, sizeof(buf),
              "scans %u    threats %u    blocked %u    denied %u    "
              "rejected plugins %u",
@@ -373,7 +431,7 @@ static void sg_draw(void)
              (unsigned)st.blocked, (unsigned)st.denied,
              (unsigned)st.rejected_plugins);
     draw_text(sg_win, cx0, prot_y + 66, cfg.col_menu_fg, buf);
-    scde_security_db_info(&rules, &hashes, &trusted);
+    xenus_security_db_info(&rules, &hashes, &trusted);
     snprintf(buf, sizeof(buf), "rules %d    bad hashes %d    trusted %d",
              rules, hashes, trusted);
     draw_text(sg_win, cx0, prot_y + 82, cfg.col_menu_fg, buf);
@@ -381,14 +439,14 @@ static void sg_draw(void)
     /* honest enforcement status: what the kernel/sandbox can really do
      * here (probes ran once at init) - never claim isolation we lack */
     {
-        scde_security_features_t f;
+        xenus_security_features_t f;
 
-        scde_security_features(&f);
+        xenus_security_features(&f);
         snprintf(buf, sizeof(buf),
                  "kernel: %s   sandbox: %s   scanner: %s%s",
-                 scde_feature_state_name(f.kernel_enforcement),
-                 scde_feature_state_name(f.sandbox),
-                 mode == SCDE_SCAN_OFF ? "off" : "active",
+                 xenus_feature_state_name(f.kernel_enforcement),
+                 xenus_feature_state_name(f.sandbox),
+                 mode == XENUS_SCAN_OFF ? "off" : "active",
                  f.proot ? "   (proot: limited)" : "");
         fit_text(buf, sizeof(buf), buf, cx1 - cx0);
         draw_text(sg_win, cx0, prot_y + 98, cfg.col_title_fg_inactive,
@@ -397,7 +455,7 @@ static void sg_draw(void)
     {
         char lim[96];
 
-        scde_resource_describe(lim, sizeof(lim));
+        xenus_resource_describe(lim, sizeof(lim));
         fit_text(buf, sizeof(buf), lim, cx1 - cx0);
         draw_text(sg_win, cx0, prot_y + 114, cfg.col_title_fg_inactive,
                   buf);
@@ -407,12 +465,12 @@ static void sg_draw(void)
     sg_card(det_y, det_h);
     sg_section(det_y + 4, "Detection (advisory, not a sandbox)");
     {
-        int bait_on = scde_bait_enabled();
-        int mir_on = scde_mirage_enabled();
+        int bait_on = xenus_bait_enabled();
+        int mir_on = xenus_mirage_enabled();
 
         snprintf(buf, sizeof(buf), "Bait: %s  hits: %d",
-                 !scde_bait_active() ? "OFF" : bait_on ? "ON" : "OFF",
-                 scde_bait_hits());
+                 !xenus_bait_active() ? "OFF" : bait_on ? "ON" : "OFF",
+                 xenus_bait_hits());
         draw_text(sg_win, cx0, det_y + 44, cfg.col_menu_fg, buf);
         sg_btn(cx1 - 118, det_y + 30, 56, 16, 30,
                bait_on ? "ON" : "OFF");
@@ -423,8 +481,8 @@ static void sg_draw(void)
                      sg_hover == sg_nbtns - 1);
 
         snprintf(buf, sizeof(buf), "Mirage: %s  probes: %d",
-                 !scde_mirage_active() ? "OFF" : mir_on ? "ON" : "OFF",
-                 scde_mirage_probes());
+                 !xenus_mirage_active() ? "OFF" : mir_on ? "ON" : "OFF",
+                 xenus_mirage_probes());
         draw_text(sg_win, cx0, det_y + 66, cfg.col_menu_fg, buf);
         sg_btn(cx1 - 118, det_y + 52, 56, 16, 31,
                mir_on ? "ON" : "OFF");
@@ -447,9 +505,9 @@ static void sg_draw(void)
     /* permissions card */
     sg_card(perm_y, perm_h);
     sg_section(perm_y + 4, "Permissions");
-    for (i = 0; i < SCDE_POL_COUNT; i++) {
+    for (i = 0; i < XENUS_POL_COUNT; i++) {
         int y = perm_y + 28 + i * 20;
-        int on = scde_policy_get(i);
+        int on = xenus_policy_get(i);
 
         draw_text(sg_win, cx0, y + 14, cfg.col_menu_fg, pol_names[i]);
         sg_btn(cx1 - 56, y + 2, 56, 16, 100 + i,
@@ -457,16 +515,68 @@ static void sg_draw(void)
         sg_paint_btn(&sg_btns[sg_nbtns - 1], on, sg_hover == sg_nbtns - 1);
     }
 
-    /* log card: calm rows, clay tone only when risk is high */
+    /* Account Protection */
+    sg_card(auth_y, auth_h);
+    sg_section(auth_y + 4, "Account Protection");
+    {
+        int fy = auth_y + 27;
+        int fw = 218;
+        int x1 = cx0;
+        int x2 = x1 + fw + 12;
+        int bx = cx1 - 88;
+        char mask1[128], mask2[128];
+
+        memset(mask1, '*', strlen(sg_auth_password));
+        mask1[strlen(sg_auth_password)] = '\0';
+        memset(mask2, '*', strlen(sg_auth_confirm));
+        mask2[strlen(sg_auth_confirm)] = '\0';
+
+        draw_text(sg_win, x1, fy - 3, cfg.col_title_fg_inactive,
+                  xenus_auth_enabled() ? "Current password" : "Password");
+        draw_text(sg_win, x2, fy - 3, cfg.col_title_fg_inactive,
+                  xenus_auth_enabled() ? " " : "Confirm");
+
+        ui_round_fill(sg_win, x1, fy, fw, 24, 6,
+                      ui_mix(cfg.col_panel_bg, 0xffffffUL, 10));
+        ui_round_fill(sg_win, x2, fy, fw, 24, 6,
+                      ui_mix(cfg.col_panel_bg, 0xffffffUL, 10));
+
+        XSetForeground(sc.dpy, sc.gc,
+            sg_auth_focus == 1 ? ui_accent() : ui_mix(cfg.col_panel_bg, 0xffffffUL, 18));
+        XDrawRectangle(sc.dpy, sg_win, sc.gc, x1, fy, fw, 24);
+        XSetForeground(sc.dpy, sc.gc,
+            sg_auth_focus == 2 ? ui_accent() : ui_mix(cfg.col_panel_bg, 0xffffffUL, 18));
+        XDrawRectangle(sc.dpy, sg_win, sc.gc, x2, fy, fw, 24);
+
+        draw_text(sg_win, x1 + 8, fy + 16, cfg.col_menu_fg,
+                  mask1[0] ? mask1 : "Enter password");
+        draw_text(sg_win, x2 + 8, fy + 16, cfg.col_menu_fg,
+                  mask2[0] ? mask2 : "Repeat password");
+
+        if (!xenus_auth_enabled()) {
+            sg_btn(bx, fy, 88, 24, 300, "Save");
+            sg_paint_btn(&sg_btns[sg_nbtns - 1], 0,
+                         sg_hover == sg_nbtns - 1);
+        } else {
+            sg_btn(bx, fy, 88, 24, 301, "Remove");
+            sg_paint_btn(&sg_btns[sg_nbtns - 1], 0,
+                         sg_hover == sg_nbtns - 1);
+        }
+        fit_text(buf, sizeof(buf), sg_auth_status, cx1 - cx0);
+        draw_text(sg_win, cx0, auth_y + 64,
+                  cfg.col_title_fg_inactive, buf);
+    }
+
+    /* log card */
     sg_card(log_y, log_h);
     sg_section(log_y + 4, "Log");
     sg_btn(cx1 - 60, log_y + 8, 60, 18, 200, "Clear");
     sg_paint_btn(&sg_btns[sg_nbtns - 1], 0, sg_hover == sg_nbtns - 1);
     {
-        int n = scde_audit_count();
+        int n = xenus_audit_count();
         int end = n - sg_log_off;
         int start;
-        uint32_t now = scde_event_now_ms();
+        uint32_t now = xenus_event_now_ms();
 
         if (end > n)
             end = n;
@@ -479,19 +589,19 @@ static void sg_draw(void)
             draw_text(sg_win, cx0, SG_LOG_Y + 12,
                       cfg.col_title_fg_inactive, "audit log is empty");
         for (i = start; i < end; i++) {
-            scde_audit_entry_t e;
+            xenus_audit_entry_t e;
             int row = SG_LOG_Y + (i - start) * SG_LOG_ROW;
             unsigned long age;
             unsigned long color;
             char line[196];
 
-            if (scde_audit_get(i, &e) != SCDE_OK)
+            if (xenus_audit_get(i, &e) != XENUS_OK)
                 continue;
             age = (unsigned long)((now - e.time_ms) / 1000u);
             color = e.risk >= 50 ? SG_BAD : cfg.col_menu_fg;
             snprintf(line, sizeof(line), "%s %lu s  %s  r%d  %s",
                      sg_prefix(e.event), age,
-                     scde_audit_event_name(e.event), e.risk, e.subject);
+                     xenus_audit_event_name(e.event), e.risk, e.subject);
             fit_text(buf, sizeof(buf), line, cx1 - cx0);
             draw_text(sg_win, cx0, row + 12, color, buf);
         }
@@ -532,7 +642,7 @@ void security_gui_show(void)
                                CopyFromParent,
                                CWOverrideRedirect | CWBackPixel | CWEventMask,
                                &wa);
-        XStoreName(sc.dpy, sg_win, "SCDE Security");
+        XStoreName(sc.dpy, sg_win, "XENUS Security");
         ui_shape_round(sg_win, SG_W, SG_H, 14);
     }
     sg_open = 1;
@@ -540,7 +650,7 @@ void security_gui_show(void)
     sg_hover_light = -1;
     XMapRaised(sc.dpy, sg_win);
     focus_track(sg_win);
-    taskbar_register(sg_win, TASK_APP_SECURITY, "SCDE Security");
+    taskbar_register(sg_win, TASK_APP_SECURITY, "XENUS Security");
     taskbar_set_hidden(sg_win, 0);
     panel_update();
     XFlush(sc.dpy);
@@ -568,7 +678,7 @@ void security_gui_hide(void)
     /* focus falls back to the last focused client window, if any */
     if (sc.focused && !sc.focused->minimized)
         focus_track(sc.focused->win);
-    taskbar_register(sg_win, TASK_APP_SECURITY, "SCDE Security");
+    taskbar_register(sg_win, TASK_APP_SECURITY, "XENUS Security");
     taskbar_set_hidden(sg_win, 1);
     panel_update();
     XUnmapWindow(sc.dpy, sg_win);
@@ -666,7 +776,7 @@ int security_gui_button(XButtonEvent *ev)
     if (!sg_open || ev->window != sg_win)
         return 0;
     if (ev->button == Button4 || ev->button == Button5) {
-        int n = scde_audit_count();
+        int n = xenus_audit_count();
 
         if (ev->button == Button4 && sg_log_off + SG_LOG_ROWS < n)
             sg_log_off++;
@@ -678,6 +788,20 @@ int security_gui_button(XButtonEvent *ev)
     if (ev->button != Button1)
         return 1;
     focus_track(sg_win);
+    if (ev->y >= 517 && ev->y < 541) {
+        int x1 = SG_PAD + 10;
+        int x2 = x1 + 218 + 12;
+        if (ev->x >= x1 && ev->x < x1 + 218)
+            sg_auth_focus = 1;
+        else if (!xenus_auth_enabled() &&
+                 ev->x >= x2 && ev->x < x2 + 218)
+            sg_auth_focus = 2;
+        else
+            sg_auth_focus = 0;
+        sg_draw();
+        if (sg_auth_focus)
+            return 1;
+    }
     if (ev->y < SG_TITLE) {
         int cell = 21;
         int left = 8;
@@ -709,17 +833,21 @@ int security_gui_button(XButtonEvent *ev)
         else if (b->id == 31)
             sg_toggle_mirage();
         else if (b->id == 32) {
-            scde_bait_check();          /* manual detection sweep */
+            xenus_bait_check();          /* manual detection sweep */
             sg_draw();
-        } else if (b->id >= 100 && b->id < 100 + SCDE_POL_COUNT) {
+        } else if (b->id >= 100 && b->id < 100 + XENUS_POL_COUNT) {
             int key = b->id - 100;
 
-            scde_policy_set(key, scde_policy_get(key) ? 0 : 1);
+            xenus_policy_set(key, xenus_policy_get(key) ? 0 : 1);
             sg_draw();
         } else if (b->id == 200) {
-            scde_audit_clear();
+            xenus_audit_clear();
             sg_log_off = 0;
             sg_draw();
+        } else if (b->id == 300) {
+            sg_auth_submit();
+        } else if (b->id == 301) {
+            sg_auth_remove();
         }
         return 1;
     }
@@ -730,10 +858,59 @@ void security_gui_key(XKeyEvent *ev)
 {
     char tmp[8];
     KeySym sym = NoSymbol;
+    int n;
 
     if (!sg_open)
         return;
-    XLookupString(ev, tmp, sizeof(tmp) - 1, &sym, NULL);
+    n = XLookupString(ev, tmp, sizeof(tmp) - 1, &sym, NULL);
+
+    if (sg_auth_focus) {
+        char *target = sg_auth_focus == 1 ? sg_auth_password : sg_auth_confirm;
+        size_t len = strlen(target);
+
+        if (sym == XK_Escape) {
+            sg_wipe(sg_auth_password, sizeof(sg_auth_password));
+            sg_wipe(sg_auth_confirm, sizeof(sg_auth_confirm));
+            sg_auth_focus = 0;
+            sg_draw();
+            return;
+        }
+        if (sym == XK_Tab) {
+            sg_auth_focus = sg_auth_focus == 1 ? 2 : 1;
+            sg_draw();
+            return;
+        }
+        if (sym == XK_Return || sym == XK_KP_Enter) {
+            if (xenus_auth_enabled()) {
+                snprintf(sg_auth_status, sizeof(sg_auth_status),
+                         "Press Remove to disable password");
+            } else if (sg_auth_focus == 1) {
+                sg_auth_focus = 2;
+            } else {
+                sg_auth_submit();
+            }
+            sg_draw();
+            return;
+        }
+        if (sym == XK_BackSpace) {
+            if (len)
+                target[len - 1] = '\0';
+            sg_draw();
+            return;
+        }
+        if (n > 0) {
+            int i;
+            for (i = 0; i < n && len < sizeof(sg_auth_password) - 1; i++) {
+                unsigned char c = (unsigned char)tmp[i];
+                if (c >= 32 && c <= 126)
+                    target[len++] = (char)c;
+            }
+            target[len] = '\0';
+            sg_draw();
+        }
+        return;
+    }
+
     if (sym == XK_Escape || sym == XK_q)
         security_gui_close();
 }

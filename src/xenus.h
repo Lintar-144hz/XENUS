@@ -1,9 +1,9 @@
 /*
- * SCDE - Solo Coding Desktop Environment
+ * XENUS - Solo Coding Desktop Environment
  * V0.2 - lightweight Xlib window manager / desktop environment
  */
-#ifndef SCDE_H
-#define SCDE_H
+#ifndef XENUS_H
+#define XENUS_H
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -14,8 +14,8 @@
 #include <signal.h>
 #include <stddef.h>
 
-#define SCDE_VERSION "0.2"
-#define SCDE_NAME "scde"
+#define XENUS_VERSION "0.2"
+#define XENUS_NAME "xenus"
 
 #define MAX_MENU_ITEMS 64
 #define MAX_MENU_LABEL 64
@@ -23,6 +23,7 @@
 #define MAX_PANEL_BTNS 256
 #define MIN_CLIENT_SIZE 48
 #define NAME_MAX_LEN 128
+#define XENUS_WORKSPACES 4
 
 /* drag modes */
 #define DRAG_MOVE      0
@@ -64,6 +65,9 @@ typedef struct {
     char config_path[512];
     char wallpaper[512];               /* image path, empty = gradient */
     int sandbox_memory_mb;             /* sandbox RAM ceiling (MiB) */
+    int theme;                         /* 0 = dark, 1 = light */
+    int accent;                        /* 0 blue, 1 silver, 2 graphite */
+    int animations;                    /* 1 = subtle shell motion */
 
     /* colour strings (parsed after the display is open) */
     char s_background[32];
@@ -126,7 +130,11 @@ struct Client {
     int sx, sy, sw, sh;         /* geometry saved while maximized */
     int hover_btn;
     int ignore_unmap;
+    int workspace;              /* 0..XENUS_WORKSPACES-1 */
+    int ws_hidden;              /* unmapped by a workspace switch */
     char name[NAME_MAX_LEN];
+    char app_class[64];         /* WM_CLASS res_class, for app grouping */
+    char app_instance[64];      /* WM_CLASS res_name */
     Client *next;
 };
 
@@ -167,9 +175,11 @@ typedef struct {
     Atom atom_net_wm_state_fullscreen;
     Atom atom_net_supported;
     Atom atom_net_supporting_wm_check;
-    Atom atom_scde_task_list;
+    Atom atom_xenus_task_list;
     Window wm_check;
 
+    int workspace;              /* active workspace */
+    int workspace_count;
     Client *clients;            /* mapping order, head = first mapped */
     Client *focused;
     Window focus_win;           /* window that owns the X input focus */
@@ -194,9 +204,9 @@ typedef struct {
     char lock_path[512];
 
     volatile sig_atomic_t running;
-} Scde;
+} Xenus;
 
-extern Scde sc;
+extern Xenus sc;
 extern Config cfg;
 
 /* -------------------------------------------------------------- taskbar.c */
@@ -205,6 +215,8 @@ extern Config cfg;
 #define TASK_APP_CLIENT   0   /* reparented external client (wm) */
 #define TASK_APP_FM       1   /* built-in file manager */
 #define TASK_APP_SECURITY 2   /* built-in security center */
+#define TASK_APP_SYSTEM   3
+#define TASK_APP_EDITOR   4   /* System Center */
 
 typedef struct {
     Window win;
@@ -234,6 +246,12 @@ int taskbar_internal_count(void);
 const TaskInternal *taskbar_internal_at(int i);
 void taskbar_activate(int i);
 void taskbar_close(int i);
+void taskbar_minimize_entry(int i);
+void taskbar_maximize_entry(int i);
+void taskbar_quit(int i);
+int taskbar_app_key(int i, char *out, size_t out_size);
+void taskbar_group_state(int i, int *count, int *hidden, int *focused);
+int taskbar_find_type(int app_type);
 const char *taskbar_active_title(void); /* focused entry title or NULL */
 
 /* track the X window that currently owns the input focus */
@@ -243,6 +261,7 @@ void focus_drop(Window w);
 /* ------------------------------------------------------------------ util.c */
 
 void log_msg(const char *fmt, ...);
+int event_next_coalesced(XEvent *ev);
 void die(const char *fmt, ...);
 void spawn(const char *cmd);
 void shell_quote(char *out, size_t size, const char *s);
@@ -294,6 +313,7 @@ unsigned long ui_dim(unsigned long c, unsigned long bg);
 unsigned long ui_wallpaper_color(int y);
 unsigned long ui_accent(void);
 unsigned long ui_accent_soft(void);
+void ui_set_accent(int accent);
 unsigned long ui_green(void);
 unsigned long ui_yellow(void);
 unsigned long ui_red(void);
@@ -336,6 +356,15 @@ void ui_draw_image_icon(Window w, int x, int cy, int size, unsigned long fg);
 void ui_draw_film_icon(Window w, int x, int cy, int size, unsigned long fg);
 void ui_draw_trash_icon(Window w, int cx, int cy, int size, unsigned long fg);
 void ui_draw_drive_icon(Window w, int x, int cy, int size, unsigned long fg);
+void ui_draw_sliders(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_bell(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_bluetooth(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_airplane(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_moon(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_sun(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_speaker(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_cpu(Window w, int cx, int cy, int size, unsigned long fg);
+void ui_draw_chip(Window w, int cx, int cy, int size, unsigned long fg);
 
 /* ---------------------------------------------------------------- config.c */
 
@@ -344,6 +373,9 @@ int config_load(Config *c, const char *path);
 int config_resolve_colors(Config *c);
 void config_add_defaults_menu(Config *c);
 int config_set_wallpaper(const char *path);
+void config_apply_theme(Config *c, int light);
+void config_apply_accent(Config *c, int accent);
+int config_set_value(const char *key, const char *value);
 
 /* --------------------------------------------------------------- apps.c */
 
@@ -459,12 +491,14 @@ void dock_raise(void);
 void dock_expose(XExposeEvent *ev);
 int dock_button_press(XButtonEvent *ev);
 void dock_motion(XMotionEvent *ev);
+void dock_leave(void);
 int dock_reserved(void);        /* dock height + margin below the desktop */
 void dock_resample_bg(void);    /* wallpaper changed: re-sample corners */
 
 /* -------------------------------------------------------------- launcher.c */
 
 void menu_show(void);
+void menu_show_above_dock(int dock_y);
 void menu_hide(void);
 int menu_is_open(void);
 void menu_key(XKeyEvent *ev);
@@ -494,6 +528,19 @@ int fm_motion(XMotionEvent *ev);
 void fm_key(XKeyEvent *ev);
 void fm_cleanup(void);
 
+/* ------------------------------------------------------- text_editor.c */
+int text_editor_open(const char *path);
+void text_editor_show(void);
+void text_editor_hide(void);
+void text_editor_close(void);
+int text_editor_open_state(void);
+Window text_editor_window(void);
+int text_editor_expose(XExposeEvent *ev);
+int text_editor_button(XButtonEvent *ev);
+int text_editor_motion(XMotionEvent *ev);
+void text_editor_key(XKeyEvent *ev);
+void text_editor_cleanup(void);
+
 /* -------------------------------------------------------- security_gui.c */
 
 void security_gui_show(void);
@@ -509,6 +556,63 @@ int security_gui_motion(XMotionEvent *ev);
 void security_gui_key(XKeyEvent *ev);
 void security_gui_cleanup(void);
 
+/* ------------------------------------------------------- control_center.c */
+
+void control_center_show(void);
+void control_center_show_settings(void);
+void control_center_hide(void);
+void control_center_toggle(void);
+int control_center_open(void);
+Window control_center_window(void);
+void control_center_tick(void);
+int control_center_expose(XExposeEvent *ev);
+int control_center_button(XButtonEvent *ev);
+int control_center_motion(XMotionEvent *ev);
+void control_center_key(XKeyEvent *ev);
+void control_center_cleanup(void);
+
+/* --------------------------------------------------- notification_center.c */
+
+void notification_center_show(void);
+void notification_center_hide(void);
+void notification_center_toggle(void);
+int notification_center_open(void);
+Window notification_center_window(void);
+int notification_center_unread(void);
+void notification_center_tick(void);
+int notification_center_expose(XExposeEvent *ev);
+int notification_center_button(XButtonEvent *ev);
+int notification_center_motion(XMotionEvent *ev);
+void notification_center_key(XKeyEvent *ev);
+void notification_center_cleanup(void);
+
+/* -------------------------------------------------------- system_center.c */
+
+void system_center_show(void);
+void system_center_hide(void);
+void system_center_toggle(void);
+void system_center_close(void);
+int system_center_open(void);
+Window system_center_window(void);
+void system_center_tick(void);
+void system_center_redraw(void);
+int system_center_expose(XExposeEvent *ev);
+int system_center_button(XButtonEvent *ev);
+int system_center_motion(XMotionEvent *ev);
+void system_center_key(XKeyEvent *ev);
+void system_center_cleanup(void);
+
+/* --------------------------------------------------------------- wm.c -- */
+
+int workspace_count(void);
+int workspace_current(void);
+void workspace_switch(int index);
+void workspace_move_active(int index);
+const char *workspace_name(int index);
+
+/* shell-wide theme refresh (main.c): wallpaper + panel + dock + clients */
+void shell_refresh_theme(void);
+
 /* -------------------------------------------------------------- desktop.c */
 
 void desktop_init(void);
@@ -523,4 +627,4 @@ int  desktop_motion(XMotionEvent *ev);
 int  desktop_expose(XExposeEvent *ev);
 void desktop_root_property(XPropertyEvent *ev);
 
-#endif /* SCDE_H */
+#endif /* XENUS_H */

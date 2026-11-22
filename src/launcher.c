@@ -1,7 +1,7 @@
 /*
- * SCDE - launcher (searchable app menu), desktop menu, Alt+F2 run prompt
+ * XENUS - launcher (searchable app menu), desktop menu, Alt+F2 run prompt
  */
-#include "scde.h"
+#include "xenus.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -34,6 +34,8 @@
 
 /* --------------------------------------------------------- menu state ---- */
 
+#define LAUNCH_DOCK_GAP 8
+
 static int menu_open;
 static int menu_sel;
 static int menu_scroll;
@@ -46,7 +48,8 @@ static int menu_icon;               /* icon tile size (launcher only) */
 static char menu_query[96];
 static int menu_filter[MENU_FILTER_MAX];   /* visible row -> menu_src */
 static int menu_vis;                       /* visible row count */
-static int menu_anchor_x = -1, menu_anchor_y = -1;  /* fixed while open */
+static int menu_anchor_x = -1, menu_anchor_y = -1;
+static int menu_dock_anchor;
 static MenuEntry desktop_items[24];
 static int desktop_n;
 
@@ -152,6 +155,25 @@ static unsigned long tile_color(const char *name)
     for (; *name; name++)
         h = h * 31u + (unsigned int)(unsigned char)*name;
     return pal[h % (sizeof(pal) / sizeof(pal[0]))];
+}
+
+static int app_icon_kind(const char *label)
+{
+    if (!label)
+        return -1;
+    if (strstr(label, "Security"))
+        return UI_ICON_SECURITY;
+    if (strstr(label, "Browser") || strstr(label, "Firefox"))
+        return UI_ICON_BROWSER;
+    if (strstr(label, "Terminal") || strstr(label, "XTerm") ||
+        strstr(label, "UXTerm"))
+        return UI_ICON_TERMINAL;
+    if (strstr(label, "Files") || strstr(label, "File Manager") ||
+        strstr(label, "Thunar"))
+        return UI_ICON_FILES;
+    if (strstr(label, "Settings") || strstr(label, "Control"))
+        return UI_ICON_SETTINGS;
+    return -1;
 }
 
 /* first letter of the label, for the icon tile */
@@ -288,6 +310,10 @@ static void menu_geometry(void)
 
         avail = sc.sh - cfg.panel_height - 24 -
                 (LAUNCH_HEAD + LAUNCH_SEP);
+        if (menu_dock_anchor)
+            avail = menu_anchor_y - LAUNCH_DOCK_GAP -
+                    reserve_top() - 4 -
+                    (LAUNCH_HEAD + LAUNCH_SEP);
         maxr = avail / menu_item_h;
         if (maxr < LAUNCH_MIN_ROWS)
             maxr = LAUNCH_MIN_ROWS;
@@ -309,11 +335,17 @@ static void menu_geometry(void)
         /* keep the field still while the list shrinks or grows */
         if (menu_anchor_y >= 0) {
             menu_mx = menu_anchor_x;
-            menu_my = menu_anchor_y;
-            if (menu_my + menu_mh > sc.sh - reserve_bottom() - 4)
-                menu_my = sc.sh - reserve_bottom() - menu_mh - 4;
-            if (menu_my < 0)
-                menu_my = 0;
+            if (menu_dock_anchor) {
+                menu_my = menu_anchor_y - LAUNCH_DOCK_GAP - menu_mh;
+                if (menu_my < reserve_top() + 4)
+                    menu_my = reserve_top() + 4;
+            } else {
+                menu_my = menu_anchor_y;
+                if (menu_my + menu_mh > sc.sh - reserve_bottom() - 4)
+                    menu_my = sc.sh - reserve_bottom() - menu_mh - 4;
+                if (menu_my < 0)
+                    menu_my = 0;
+            }
         }
         return;
     }
@@ -380,7 +412,7 @@ static void menu_create_window(void)
                                 CopyFromParent, InputOutput, CopyFromParent,
                                 CWOverrideRedirect | CWBackPixel | CWEventMask,
                                 &wa);
-        XStoreName(sc.dpy, sc.menu, "scde-menu");
+        XStoreName(sc.dpy, sc.menu, "xenus-menu");
     } else {
         XMoveResizeWindow(sc.dpy, sc.menu, menu_mx, menu_my,
                           (unsigned)menu_mw, (unsigned)menu_mh);
@@ -388,7 +420,8 @@ static void menu_create_window(void)
     ui_shape_round(sc.menu, menu_mw, menu_mh, MENU_RADIUS);
 }
 
-static void menu_open_common(int desktop, MenuEntry *src, int n)
+static void menu_open_common(int desktop, MenuEntry *src, int n,
+                              int anchor_y)
 {
     if (menu_open)
         return;
@@ -404,11 +437,20 @@ static void menu_open_common(int desktop, MenuEntry *src, int n)
     menu_sel = 0;
     menu_scroll = 0;
     menu_anchor_x = menu_anchor_y = -1;
+    menu_dock_anchor = 0;
     menu_refilter();
     menu_layout();
-    if (menu_search) {
-        menu_anchor_x = menu_mx;
-        menu_anchor_y = menu_my;
+    if (menu_search && anchor_y >= 0) {
+        menu_dock_anchor = 1;
+        menu_anchor_x = (sc.sw - menu_mw) / 2 + 16;
+        if (menu_anchor_x < 4)
+            menu_anchor_x = 4;
+        if (menu_anchor_x + menu_mw > sc.sw - 4)
+            menu_anchor_x = sc.sw - menu_mw - 4;
+        if (menu_anchor_x < 0)
+            menu_anchor_x = 0;
+        menu_anchor_y = anchor_y;
+        menu_layout();
     }
     menu_create_window();
 
@@ -428,7 +470,12 @@ void menu_show(void)
 {
     menu_mx = 4;
     menu_my = 0;
-    menu_open_common(0, sc.menu_items, sc.menu_item_count);
+    menu_open_common(0, sc.menu_items, sc.menu_item_count, -1);
+}
+
+void menu_show_above_dock(int dock_y)
+{
+    menu_open_common(0, sc.menu_items, sc.menu_item_count, dock_y);
 }
 
 void desktop_menu_show(XButtonEvent *ev)
@@ -453,6 +500,9 @@ void desktop_menu_show(XButtonEvent *ev)
     ADD("New Folder", "@d-newdir");
     ADD("New File", "@d-newfile");
     ADD("Refresh", "@d-refresh");
+    ADD("Control Center", "@control");
+    ADD("System Center", "@system");
+    ADD("Notifications", "@notifications");
     ADD("Security Center", "@security");
     ADD("-", "");
     ADD("Log out", "@logout");
@@ -460,7 +510,7 @@ void desktop_menu_show(XButtonEvent *ev)
 
     menu_mx = ev ? ev->x_root : 4;
     menu_my = ev ? ev->y_root : 4;
-    menu_open_common(1, desktop_items, desktop_n);
+    menu_open_common(1, desktop_items, desktop_n, -1);
 }
 
 /* anchor an arbitrary item list at the given pointer position */
@@ -468,7 +518,7 @@ void menu_show_custom(MenuEntry *items, int n, int x, int y)
 {
     menu_mx = x;
     menu_my = y;
-    menu_open_common(1, items, n);
+    menu_open_common(1, items, n, -1);
 }
 
 void menu_hide(void)
@@ -605,23 +655,28 @@ static void menu_draw_launch(void)
         {
             char g[2];
             int iy = y0 + (menu_item_h - menu_icon) / 2;
+            int kind = app_icon_kind(e->label);
 
             tile_glyph(e->label, g, sizeof(g));
-            {
+            if (kind >= 0) {
+                ui_draw_app_icon(sc.menu, kind, LAUNCH_ICON_X, iy, menu_icon,
+                                 0, g);
+            } else {
                 unsigned long base = tile_color(e->label);
 
                 ui_round_fill_gradient(sc.menu, LAUNCH_ICON_X, iy, menu_icon,
                                        menu_icon, 6,
                                        mix_color(base, 0xffffffUL, 20),
                                        mix_color(base, 0x000000UL, 18));
-            }
-            if (g[0] != '\0') {
-                int gw = text_width(g);
-                int gbl = iy + (menu_icon + sc.font_ascent -
-                                sc.font_descent) / 2;
+                if (g[0] != '\0') {
+                    int gw = text_width(g);
+                    int gbl = iy + (menu_icon + sc.font_ascent -
+                                    sc.font_descent) / 2;
 
-                draw_text(sc.menu, LAUNCH_ICON_X + (menu_icon - gw) / 2, gbl,
-                          mix_color(cfg.col_menu_fg, 0xffffffUL, 45), g);
+                    draw_text(sc.menu, LAUNCH_ICON_X + (menu_icon - gw) / 2,
+                              gbl,
+                              mix_color(cfg.col_menu_fg, 0xffffffUL, 45), g);
+                }
             }
         }
 
@@ -674,20 +729,20 @@ static void menu_draw(void)
 /* ------------------------------------------------------------ actions --- */
 
 /* menu bar windows: about / shortcuts (bounded text, msgbox wraps it) */
-static void wm_about(int scde_only)
+static void wm_about(int xenus_only)
 {
     char text[512];
     const char *t = taskbar_active_title();
 
-    if (scde_only || !t || !*t)
+    if (xenus_only || !t || !*t)
         snprintf(text, sizeof(text),
-                 "SCDE %s - Solo Coding Desktop Environment\n\n"
+                 "XENUS %s - Solo Coding Desktop Environment\n\n"
                  "A lightweight C + X11 desktop.\n"
                  "One process, no compositor, no toolkits.",
-                 SCDE_VERSION);
+                 XENUS_VERSION);
     else
-        snprintf(text, sizeof(text), "About %s\n\nrunning under SCDE %s",
-                 t, SCDE_VERSION);
+        snprintf(text, sizeof(text), "About %s\n\nrunning under XENUS %s",
+                 t, XENUS_VERSION);
     msgbox_show("About", text);
 }
 
@@ -728,6 +783,14 @@ static void menu_activate(int index)
             apps_run("browser", apps_browser());
         else if (strcmp(e.cmd, "@security") == 0)
             security_gui_toggle();
+        else if (strcmp(e.cmd, "@control") == 0)
+            control_center_toggle();
+        else if (strcmp(e.cmd, "@control-settings") == 0)
+            control_center_show_settings();
+        else if (strcmp(e.cmd, "@notifications") == 0)
+            notification_center_toggle();
+        else if (strcmp(e.cmd, "@system") == 0)
+            system_center_toggle();
         else if (strcmp(e.cmd, "@logout") == 0)
             sc.running = 0;
         else if (strcmp(e.cmd, "@wm-desktop") == 0)
@@ -737,13 +800,29 @@ static void menu_activate(int index)
         else if (strcmp(e.cmd, "@wm-close") == 0)
             active_close();
         else if (strcmp(e.cmd, "@wm-about") == 0 ||
-                 strcmp(e.cmd, "@wm-about-scde") == 0)
-            wm_about(strcmp(e.cmd, "@wm-about-scde") == 0);
+                 strcmp(e.cmd, "@wm-about-xenus") == 0)
+            wm_about(strcmp(e.cmd, "@wm-about-xenus") == 0);
         else if (strcmp(e.cmd, "@wm-keys") == 0)
             wm_about_keys();
         else if (strncmp(e.cmd, "@wm-focus ", 10) == 0)
             taskbar_activate(atoi(e.cmd + 10));
-        else
+        else if (strncmp(e.cmd, "@wm-task ", 9) == 0) {
+            char act[24];
+            int idx = -1;
+
+            if (sscanf(e.cmd + 9, "%23s %d", act, &idx) == 2 && idx >= 0) {
+                if (strcmp(act, "show") == 0)
+                    taskbar_activate(idx);
+                else if (strcmp(act, "minimize") == 0)
+                    taskbar_minimize_entry(idx);
+                else if (strcmp(act, "maximize") == 0)
+                    taskbar_maximize_entry(idx);
+                else if (strcmp(act, "close") == 0)
+                    taskbar_close(idx);
+                else if (strcmp(act, "quit") == 0)
+                    taskbar_quit(idx);
+            }
+        } else
             desktop_command(e.cmd);     /* desktop / shortcut actions */
         return;
     }
@@ -963,7 +1042,7 @@ void cmd_show(void)
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect | CWBackPixel | CWEventMask,
                                &wa);
-        XStoreName(sc.dpy, sc.cmd, "scde-cmd");
+        XStoreName(sc.dpy, sc.cmd, "xenus-cmd");
     } else {
         XMoveResizeWindow(sc.dpy, sc.cmd, cmd_x, cmd_y, cmd_w, cmd_h);
     }

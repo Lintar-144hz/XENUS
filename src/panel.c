@@ -1,6 +1,6 @@
-#include "scde.h"
+#include "xenus.h"
 
-#include <scde/security.h>
+#include <xenus/security.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -121,7 +121,7 @@ static void bar_open_menu(int kind, int x)
     } while (0)
 
     if (kind == MB_FILE) {
-        const char *t = cur_app[0] ? cur_app : "SCDE";
+        const char *t = cur_app[0] ? cur_app : "XENUS";
         char label[96];
 
         snprintf(label, sizeof(label), "About %.48s", t);
@@ -132,7 +132,7 @@ static void bar_open_menu(int kind, int x)
         snprintf(label, sizeof(label), "Close %.48s", t);
         ADD(file_items, label, "@wm-close");
         ADD(file_items, "-", "");
-        ADD(file_items, "Quit SCDE", "@logout");
+        ADD(file_items, "Quit XENUS", "@logout");
         list = file_items;
     } else if (kind == MB_WINDOW) {
         taskbar_sync();
@@ -151,7 +151,7 @@ static void bar_open_menu(int kind, int x)
         }
         list = win_items;
     } else {
-        ADD(help_items, "About SCDE", "@wm-about-scde");
+        ADD(help_items, "About XENUS", "@wm-about-xenus");
         ADD(help_items, "Keyboard Shortcuts", "@wm-keys");
         ADD(help_items, "-", "");
         ADD(help_items, "Security Center", "@security");
@@ -167,7 +167,7 @@ static const char *display_app_name(void)
 {
     if (strcmp(cur_app, "File Manager") == 0)
         return "Files";
-    if (strcmp(cur_app, "SCDE Security") == 0)
+    if (strcmp(cur_app, "XENUS Security") == 0)
         return "Security";
     return cur_app;
 }
@@ -188,7 +188,7 @@ void panel_create(void)
                              CopyFromParent,
                              CWOverrideRedirect | CWBackPixel | CWEventMask,
                              &wa);
-    XStoreName(sc.dpy, sc.panel, "scde-menubar");
+    XStoreName(sc.dpy, sc.panel, "xenus-menubar");
     clock_has_seconds = strchr(cfg.clock_format, 'S') != NULL;
     format_now(clock_str, sizeof(clock_str), cfg.clock_format);
 
@@ -225,7 +225,7 @@ void panel_update(void)
     taskbar_sync();
     active_title = taskbar_active_title();
     str_copy(cur_app, sizeof(cur_app),
-             active_title && *active_title ? active_title : "SCDE");
+             active_title && *active_title ? active_title : "XENUS");
 
     bar_h = menubar_h();
     clock_str[0] = '\0';
@@ -233,7 +233,7 @@ void panel_update(void)
         format_now(clock_str, sizeof(clock_str), cfg.clock_format);
 
     clock_w = cfg.show_clock && clock_str[0] ? text_width(clock_str) + 18 : 0;
-    tray_w = cfg.show_tray ? TRAY_ICON_W * 4 : 0;
+    tray_w = cfg.show_tray ? TRAY_ICON_W * 6 : 0;
 
     tray_draw = tray_w > 0 &&
                 sc.sw - clock_w - tray_w - 16 - 260 >= 8;
@@ -307,7 +307,7 @@ void panel_update(void)
 
             if (tx < items[MB_HELP].x + items[MB_HELP].w + 8)
                 tx = items[MB_HELP].x + items[MB_HELP].w + 8;
-            for (i = 0; i < 4; i++) {
+            for (i = 0; i < 6; i++) {
                 if (hover_tray == i)
                     ui_round_fill(sc.panel, tx + 1, 3, TRAY_ICON_W - 2,
                                   bar_h - 6, 5,
@@ -319,10 +319,23 @@ void panel_update(void)
                 else if (i == 2)
                     ui_draw_battery(sc.panel, tx + 5, cy, cfg.col_panel_fg,
                                     cfg.col_panel_bg);
-                else
+                else if (i == 3)
+                    ui_draw_sliders(sc.panel, tx + 12, cy, 14,
+                                    control_center_open() ? ui_accent()
+                                                          : cfg.col_panel_fg);
+                else if (i == 4) {
+                    int unread = notification_center_unread();
+
+                    ui_draw_bell(sc.panel, tx + 12, cy, 14,
+                                 notification_center_open() ? ui_accent()
+                                                            : cfg.col_panel_fg);
+                    if (unread > 0)
+                        ui_round_fill(sc.panel, tx + 16, cy - 9, 8, 8, 4,
+                                      ui_red());
+                } else
                     ui_draw_shield(sc.panel, tx + 5, cy, 14,
-                                   scde_security_get_scan_mode() ==
-                                           SCDE_SCAN_OFF
+                                   xenus_security_get_scan_mode() ==
+                                           XENUS_SCAN_OFF
                                        ? ui_dim(cfg.col_panel_fg,
                                                 cfg.col_panel_bg)
                                        : ui_accent());
@@ -378,7 +391,15 @@ int panel_button_press(XButtonEvent *ev)
         if (tx < items[MB_HELP].x + items[MB_HELP].w + 8)
             tx = items[MB_HELP].x + items[MB_HELP].w + 8;
         if (ev->x >= tx && ev->x < tx + tray_w) {
-            if ((ev->x - tx) / TRAY_ICON_W == 3)
+            int icon = (ev->x - tx) / TRAY_ICON_W;
+
+            if (icon <= 2)
+                control_center_toggle();
+            else if (icon == 3)
+                control_center_toggle();
+            else if (icon == 4)
+                notification_center_toggle();
+            else if (icon == 5)
                 security_gui_toggle();
             return 1;
         }
@@ -402,7 +423,7 @@ void panel_motion(XMotionEvent *ev)
 
         if (tx < items[MB_HELP].x + items[MB_HELP].w + 8)
             tx = items[MB_HELP].x + items[MB_HELP].w + 8;
-        for (i = 0; i < 4; i++) {
+        for (i = 0; i < 6; i++) {
             if (ev->x >= tx + i * TRAY_ICON_W &&
                 ev->x < tx + (i + 1) * TRAY_ICON_W)
                 tch = i;

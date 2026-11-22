@@ -1,6 +1,6 @@
 /*
  * Prints a root window pixel - used to verify the desktop background colour
- * set by SCDE and the desktop shortcuts drawn on the root window.
+ * set by XENUS and the desktop shortcuts drawn on the root window.
  * usage: rootpixel [x y]      (defaults to 0,0)
  */
 #include <X11/Xlib.h>

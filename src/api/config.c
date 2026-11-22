@@ -1,8 +1,8 @@
 /*
- * SCDE App API - read-only key=value configuration access.
+ * XENUS App API - read-only key=value configuration access.
  */
-#include <scde/config.h>
-#include <scde/event.h>
+#include <xenus/config.h>
+#include <xenus/event.h>
 
 #include "internal.h"
 
@@ -12,23 +12,23 @@
 #include <string.h>
 
 typedef struct {
-    char key[SCDE_CONFIG_KEY_LEN];
-    char value[SCDE_CONFIG_VALUE_LEN];
+    char key[XENUS_CONFIG_KEY_LEN];
+    char value[XENUS_CONFIG_VALUE_LEN];
 } entry_t;
 
-static entry_t table[SCDE_CONFIG_MAX_KEYS];
+static entry_t table[XENUS_CONFIG_MAX_KEYS];
 static size_t table_len;
 static char cfg_path[512];
 
 static void post_config_changed(void)
 {
-    scde_event_t ev;
+    xenus_event_t ev;
 
     memset(&ev, 0, sizeof(ev));
-    ev.type = SCDE_EVENT_CONFIG_CHANGED;
+    ev.type = XENUS_EVENT_CONFIG_CHANGED;
     ev.id = table_len;
     snprintf(ev.text, sizeof(ev.text), "%.120s", cfg_path);
-    scde_event_post(&ev);
+    xenus_event_post(&ev);
 }
 
 static char *trim(char *s)
@@ -51,7 +51,7 @@ static void clear_table(void)
 
 static const char *default_path(char *buf, size_t buf_len)
 {
-    const char *env = getenv("SCDE_CONFIG");
+    const char *env = getenv("XENUS_CONFIG");
     const char *home;
 
     if (env && *env)
@@ -59,11 +59,11 @@ static const char *default_path(char *buf, size_t buf_len)
     home = getenv("HOME");
     if (!home || !*home)
         return NULL;
-    snprintf(buf, buf_len, "%s/.config/scde/config", home);
+    snprintf(buf, buf_len, "%s/.config/xenus/config", home);
     return buf;
 }
 
-int scde_config_load(const char *path)
+int xenus_config_load(const char *path)
 {
     char buf[512];
     char use_buf[512];
@@ -74,9 +74,9 @@ int scde_config_load(const char *path)
     if (!use) {
         use = default_path(buf, sizeof(buf));
         if (!use)
-            return SCDE_ERR_NOT_FOUND;
+            return XENUS_ERR_NOT_FOUND;
     }
-    /* snapshot: `use` may alias cfg_path (scde_config_reload passes it) */
+    /* snapshot: `use` may alias cfg_path (xenus_config_reload passes it) */
     snprintf(use_buf, sizeof(use_buf), "%.*s", (int)(sizeof(use_buf) - 1),
              use);
     use = use_buf;
@@ -88,10 +88,10 @@ int scde_config_load(const char *path)
     f = fopen(use, "r");
     if (!f) {
         cfg_path[0] = '\0';
-        return SCDE_ERR_NOT_FOUND;
+        return XENUS_ERR_NOT_FOUND;
     }
 
-    while (fgets(line, sizeof(line), f) && table_len < SCDE_CONFIG_MAX_KEYS) {
+    while (fgets(line, sizeof(line), f) && table_len < XENUS_CONFIG_MAX_KEYS) {
         char *s = trim(line);
         char *eq;
         char *key;
@@ -107,7 +107,7 @@ int scde_config_load(const char *path)
         value = trim(eq + 1);
         if (*key == '\0')
             continue;
-        if (strlen(key) >= SCDE_CONFIG_KEY_LEN)
+        if (strlen(key) >= XENUS_CONFIG_KEY_LEN)
             continue;
         snprintf(table[table_len].key, sizeof(table[table_len].key), "%s",
                  key);
@@ -117,25 +117,25 @@ int scde_config_load(const char *path)
     }
     fclose(f);
 
-    scde_logf(SCDE_LOG_DEBUG, "config: loaded %zu keys from %s", table_len,
+    xenus_logf(XENUS_LOG_DEBUG, "config: loaded %zu keys from %s", table_len,
               use);
     post_config_changed();
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_config_reload(void)
+int xenus_config_reload(void)
 {
     if (cfg_path[0] == '\0')
-        return SCDE_ERR_STATE;
-    return scde_config_load(cfg_path);
+        return XENUS_ERR_STATE;
+    return xenus_config_load(cfg_path);
 }
 
-const char *scde_config_path(void)
+const char *xenus_config_path(void)
 {
     return cfg_path;
 }
 
-void scde_config_clear(void)
+void xenus_config_clear(void)
 {
     clear_table();
     cfg_path[0] = '\0';
@@ -154,14 +154,14 @@ static const char *find_value(const char *key)
     return NULL;
 }
 
-const char *scde_config_get(const char *key, const char *default_value)
+const char *xenus_config_get(const char *key, const char *default_value)
 {
     const char *v = find_value(key);
 
     return v ? v : default_value;
 }
 
-int scde_config_get_int(const char *key, int default_value)
+int xenus_config_get_int(const char *key, int default_value)
 {
     const char *v = find_value(key);
     char *end;
@@ -175,7 +175,7 @@ int scde_config_get_int(const char *key, int default_value)
     return (int)n;
 }
 
-int scde_config_get_bool(const char *key, int default_value)
+int xenus_config_get_bool(const char *key, int default_value)
 {
     const char *v = find_value(key);
 
@@ -192,24 +192,24 @@ int scde_config_get_bool(const char *key, int default_value)
     return default_value;
 }
 
-int scde_config_has(const char *key)
+int xenus_config_has(const char *key)
 {
     return find_value(key) != NULL;
 }
 
-size_t scde_config_count(void)
+size_t xenus_config_count(void)
 {
     return table_len;
 }
 
-const char *scde_config_key(size_t index)
+const char *xenus_config_key(size_t index)
 {
     if (index >= table_len)
         return NULL;
     return table[index].key;
 }
 
-const char *scde_config_value(size_t index)
+const char *xenus_config_value(size_t index)
 {
     if (index >= table_len)
         return NULL;

@@ -4,9 +4,9 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DPY=":99"
-WORK=$(mktemp -d /tmp/scde-bugfix.XXXXXX)
+WORK=$(mktemp -d /tmp/xenus-bugfix.XXXXXX)
 HOME_SAVE="$HOME"
-SCDE_PID=""; CP=""; XPID=""
+XENUS_PID=""; CP=""; XPID=""
 FAILS=0
 
 ok()  { echo "  PASS: $*"; }
@@ -14,7 +14,7 @@ bad() { echo "  FAIL: $*"; FAILS=$((FAILS + 1)); }
 
 cleanup() {
     export HOME="$HOME_SAVE"
-    kill "$SCDE_PID" "$CP" "$XPID" 2>/dev/null
+    kill "$XENUS_PID" "$CP" "$XPID" 2>/dev/null
     wait 2>/dev/null
     rm -rf "$WORK"
 }
@@ -40,8 +40,8 @@ print('0x%02x%02x%02x' % (d[i], d[i+1], d[i+2]))
 shot() { "$ROOT/tests/screenshot" "$WORK/$1.ppm" >/dev/null 2>&1; }
 
 export HOME="$WORK/home"
-mkdir -p "$HOME/.config/scde"
-cat > "$HOME/.config/scde/config" <<EOF
+mkdir -p "$HOME/.config/xenus"
+cat > "$HOME/.config/xenus/config" <<EOF
 panel=bottom
 panel_height=32
 clock_format=%H:%M
@@ -52,8 +52,8 @@ Xvfb "$DPY" -screen 0 1024x768x24 -nolisten tcp >"$WORK/xvfb.log" 2>&1 &
 XPID=$!
 for i in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
 
-"$ROOT/scde" >"$WORK/scde.log" 2>&1 &
-SCDE_PID=$!
+"$ROOT/xenus" >"$WORK/xenus.log" 2>&1 &
+XENUS_PID=$!
 sleep 1.0
 
 echo "[1] desktop icons survive a window drag"
@@ -132,7 +132,7 @@ W0=$(pix "$WORK/s0.ppm" 450 200)   # same row, never covered
 echo "[2] file manager can be dragged from its title bar"
 xdotool key alt+e
 sleep 0.7
-FMWIN=$(xdotool search --name "scde-fm" 2>/dev/null | head -1)
+FMWIN=$(xdotool search --name "xenus-fm" 2>/dev/null | head -1)
 if [ -z "$FMWIN" ]; then
     bad "file manager did not open"
 else
@@ -207,7 +207,7 @@ else
     sleep 0.25
     xdotool click 1
     sleep 0.7
-    SGWIN=$(xdotool search --name "SCDE Security" 2>/dev/null | head -1)
+    SGWIN=$(xdotool search --name "XENUS Security" 2>/dev/null | head -1)
     if [ -z "$SGWIN" ]; then
         bad "Security Center did not open"
     else

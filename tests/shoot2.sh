@@ -5,13 +5,13 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 DIR=${1:-/tmp/opencode/shots}
 DPY=":96"
-WORK=$(mktemp -d /tmp/scde-shoot2.XXXXXX)
+WORK=$(mktemp -d /tmp/xenus-shoot2.XXXXXX)
 HOME_SAVE="$HOME"
-SCDE_PID=""; CP1=""; CP2=""; XPID=""
+XENUS_PID=""; CP1=""; CP2=""; XPID=""
 
 cleanup() {
     export HOME="$HOME_SAVE"
-    kill "$SCDE_PID" "$CP1" "$CP2" "$XPID" 2>/dev/null
+    kill "$XENUS_PID" "$CP1" "$CP2" "$XPID" 2>/dev/null
     wait 2>/dev/null
     rm -rf "$WORK"
 }
@@ -19,8 +19,8 @@ trap cleanup EXIT
 
 mkdir -p "$DIR"
 export HOME="$WORK/home"
-mkdir -p "$HOME/.config/scde"
-cat > "$HOME/.config/scde/config" <<EOF
+mkdir -p "$HOME/.config/xenus"
+cat > "$HOME/.config/xenus/config" <<EOF
 panel=bottom
 panel_height=32
 border_width=1
@@ -40,13 +40,13 @@ Xvfb "$DPY" -screen 0 1024x768x24 -nolisten tcp >"$WORK/xvfb.log" 2>&1 &
 XPID=$!
 for i in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
 
-"$ROOT/scde" >"$WORK/scde.log" 2>&1 &
-SCDE_PID=$!
+"$ROOT/xenus" >"$WORK/xenus.log" 2>&1 &
+XENUS_PID=$!
 sleep 0.7
 
 "$ROOT/tests/testclient" -n "editor — notes.txt" -g 380x260+90+90 >/dev/null 2>&1 &
 CP1=$!
-"$ROOT/tests/testclient" -n "build — scde" -g 420x300+520+330 >/dev/null 2>&1 &
+"$ROOT/tests/testclient" -n "build — xenus" -g 420x300+520+330 >/dev/null 2>&1 &
 CP2=$!
 sleep 1.0
 xdotool mousemove 700 450

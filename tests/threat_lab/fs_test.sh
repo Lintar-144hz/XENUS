@@ -1,9 +1,9 @@
 #!/bin/bash
 
-LAB="/tmp/scde-threat-lab"
+LAB="/tmp/xenus-threat-lab"
 
 echo "================================"
-echo "      SCDE THREAT LAB v0.1"
+echo "      XENUS THREAT LAB v0.1"
 echo "      FILESYSTEM BASELINE"
 echo "================================"
 echo
@@ -12,7 +12,7 @@ mkdir -p "$LAB/config"
 
 printf 'PUBLIC DATA\n' > "$LAB/public.txt"
 printf 'PROTECTED DATA\n' > "$LAB/private.txt"
-printf 'SCDE TEST CONFIG\n' > "$LAB/config/test.conf"
+printf 'XENUS TEST CONFIG\n' > "$LAB/config/test.conf"
 
 pass=0
 
@@ -43,4 +43,4 @@ echo "RESULT"
 echo "================================"
 echo "Baseline controlled tests: $pass passed"
 echo
-echo "No SCDE security policy is active yet."
+echo "No XENUS security policy is active yet."

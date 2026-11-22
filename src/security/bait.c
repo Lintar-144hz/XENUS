@@ -1,13 +1,13 @@
 /*
- * SCDE Bait - filesystem decoy subsystem.
+ * XENUS Bait - filesystem decoy subsystem.
  *
  * Dummy-only decoys under one root directory.  Detection is polling
- * (scde_bait_check) plus explicit telemetry (scde_bait_report); both feed
+ * (xenus_bait_check) plus explicit telemetry (xenus_bait_report); both feed
  * the audit log with pid/uid/process/trust metadata.  ADVISORY only.
  */
 #define _DEFAULT_SOURCE
-#include <scde/security.h>
-#include <scde/security_bait.h>
+#include <xenus/security.h>
+#include <xenus/security_bait.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -20,14 +20,14 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define BAIT_MARKER "SCDE-DECOY-DUMMY-DO-NOT-USE"
+#define BAIT_MARKER "XENUS-DECOY-DUMMY-DO-NOT-USE"
 #define DECOY_DIR_MODE 0700
 
 typedef struct {
     int used;
     int kind;
-    char id[SCDE_BAIT_ID_LEN];
-    char path[SCDE_BAIT_PATH_LEN];
+    char id[XENUS_BAIT_ID_LEN];
+    char path[XENUS_BAIT_PATH_LEN];
     off_t size;
     time_t mtime;
     mode_t mode;
@@ -37,22 +37,22 @@ typedef struct {
 static int bait_inited;
 static int bait_on = 1;
 static int bait_hits_total;
-static char bait_root[SCDE_BAIT_PATH_LEN];
+static char bait_root[XENUS_BAIT_PATH_LEN];
 static int bait_owned;              /* 1 when we created bait_root */
-static bait_entry_t entries[SCDE_BAIT_MAX];
+static bait_entry_t entries[XENUS_BAIT_MAX];
 
-const char *scde_bait_kind_name(int kind)
+const char *xenus_bait_kind_name(int kind)
 {
     switch (kind) {
-    case SCDE_BAIT_CONFIG:
+    case XENUS_BAIT_CONFIG:
         return "config";
-    case SCDE_BAIT_CACHE:
+    case XENUS_BAIT_CACHE:
         return "cache";
-    case SCDE_BAIT_DOCUMENT:
+    case XENUS_BAIT_DOCUMENT:
         return "document";
-    case SCDE_BAIT_EXECUTABLE:
+    case XENUS_BAIT_EXECUTABLE:
         return "executable";
-    case SCDE_BAIT_APPDATA:
+    case XENUS_BAIT_APPDATA:
         return "appdata";
     default:
         return "unknown";
@@ -102,13 +102,13 @@ static void audit_with_meta(int event, const char *subject, int risk,
 
     proc_comm(comm, sizeof(comm));
     switch (trust) {
-    case SCDE_TRUST_TRUSTED:
+    case XENUS_TRUST_TRUSTED:
         ts = "trusted";
         break;
-    case SCDE_TRUST_UNTRUSTED:
+    case XENUS_TRUST_UNTRUSTED:
         ts = "untrusted";
         break;
-    case SCDE_TRUST_BLOCKED:
+    case XENUS_TRUST_BLOCKED:
         ts = "blocked";
         break;
     default:
@@ -117,7 +117,7 @@ static void audit_with_meta(int event, const char *subject, int risk,
     }
     snprintf(detail, sizeof(detail), "pid=%ld uid=%ld %s op=%s %s", pid,
              uid, comm, op ? op : "-", ts);
-    scde_audit_log(event, subject, risk, detail);
+    xenus_audit_log(event, subject, risk, detail);
 }
 
 static int leaf_ok(const char *leaf)
@@ -149,36 +149,36 @@ static int ensure_dir(const char *path)
     struct stat st;
 
     if (lstat(path, &st) == 0)
-        return S_ISDIR(st.st_mode) ? SCDE_OK : SCDE_ERR;
+        return S_ISDIR(st.st_mode) ? XENUS_OK : XENUS_ERR;
     if (mkdir(path, DECOY_DIR_MODE) != 0)
-        return SCDE_ERR;
+        return XENUS_ERR;
     chmod(path, DECOY_DIR_MODE);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 static const char *dummy_for(int kind, const char *leaf)
 {
     (void)leaf;
     switch (kind) {
-    case SCDE_BAIT_CONFIG:
+    case XENUS_BAIT_CONFIG:
         return BAIT_MARKER
-               "\n# fake SCDE decoy config - no real settings here\n"
+               "\n# fake XENUS decoy config - no real settings here\n"
                "theme=decoy-grey\nfont=decoy-mono-10\n"
                "server=decoy.invalid\nusername=decoy-user\n"
                "password=DECOY-NOT-A-REAL-PASSWORD\n";
-    case SCDE_BAIT_CACHE:
+    case XENUS_BAIT_CACHE:
         return BAIT_MARKER
                "\n# fake cache - regenerated dummy bytes\n"
                "blob=AAAAAAAAAAAAAAAA\nblob2=BBBBBBBBBBBBBBBB\n";
-    case SCDE_BAIT_DOCUMENT:
+    case XENUS_BAIT_DOCUMENT:
         return BAIT_MARKER
                "\nDecoy document for threat detection.\n"
                "There is no real content in this file.\n";
-    case SCDE_BAIT_EXECUTABLE:
+    case XENUS_BAIT_EXECUTABLE:
         return "#!/bin/sh\n# " BAIT_MARKER
                " - harmless decoy, does nothing useful\n"
                "echo decoy\n";
-    case SCDE_BAIT_APPDATA:
+    case XENUS_BAIT_APPDATA:
     default:
         return BAIT_MARKER
                "\n{\n  \"profile\": \"decoy\",\n"
@@ -198,7 +198,7 @@ static bait_entry_t *find_by_path(const char *path)
 {
     int i;
 
-    for (i = 0; i < SCDE_BAIT_MAX; i++) {
+    for (i = 0; i < XENUS_BAIT_MAX; i++) {
         if (entries[i].used && strcmp(entries[i].path, path) == 0)
             return &entries[i];
     }
@@ -209,7 +209,7 @@ static bait_entry_t *alloc_entry(void)
 {
     int i;
 
-    for (i = 0; i < SCDE_BAIT_MAX; i++) {
+    for (i = 0; i < XENUS_BAIT_MAX; i++) {
         if (!entries[i].used)
             return &entries[i];
     }
@@ -222,23 +222,23 @@ static int snapshot(bait_entry_t *e)
 
     if (lstat(e->path, &st) != 0) {
         e->exists = 0;
-        return SCDE_ERR_NOT_FOUND;
+        return XENUS_ERR_NOT_FOUND;
     }
     e->exists = 1;
     e->size = st.st_size;
     e->mtime = st.st_mtime;
     e->mode = st.st_mode & 07777;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 /* ------------------------------------------------------------ lifecycle -- */
 
-int scde_bait_init(const char *dir)
+int xenus_bait_init(const char *dir)
 {
-    char tmp[SCDE_BAIT_PATH_LEN];
+    char tmp[XENUS_BAIT_PATH_LEN];
 
     if (bait_inited)
-        return SCDE_OK;
+        return XENUS_OK;
     memset(entries, 0, sizeof(entries));
     bait_hits_total = 0;
     bait_on = 1;
@@ -247,25 +247,25 @@ int scde_bait_init(const char *dir)
 
     if (dir && *dir) {
         if (strlen(dir) >= sizeof(bait_root))
-            return SCDE_ERR_ARG;
+            return XENUS_ERR_ARG;
         snprintf(bait_root, sizeof(bait_root), "%s", dir);
-        if (ensure_dir(bait_root) != SCDE_OK)
-            return SCDE_ERR_IO;
+        if (ensure_dir(bait_root) != XENUS_OK)
+            return XENUS_ERR_IO;
         bait_owned = 0;             /* caller-owned directory */
     } else {
-        const char *env = getenv("SCDE_BAIT_DIR");
+        const char *env = getenv("XENUS_BAIT_DIR");
 
         if (env && *env) {
             if (strlen(env) >= sizeof(bait_root))
-                return SCDE_ERR_ARG;
+                return XENUS_ERR_ARG;
             snprintf(bait_root, sizeof(bait_root), "%s", env);
-            if (ensure_dir(bait_root) != SCDE_OK)
-                return SCDE_ERR_IO;
+            if (ensure_dir(bait_root) != XENUS_OK)
+                return XENUS_ERR_IO;
             bait_owned = 0;
         } else {
-            snprintf(tmp, sizeof(tmp), "/tmp/scde-bait-XXXXXX");
+            snprintf(tmp, sizeof(tmp), "/tmp/xenus-bait-XXXXXX");
             if (mkdtemp(tmp) == NULL)
-                return SCDE_ERR_IO;
+                return XENUS_ERR_IO;
             snprintf(bait_root, sizeof(bait_root), "%s", tmp);
             bait_owned = 1;
         }
@@ -273,10 +273,10 @@ int scde_bait_init(const char *dir)
     /* root itself is locked down: decoys must not leak outward */
     chmod(bait_root, DECOY_DIR_MODE);
     bait_inited = 1;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-void scde_bait_shutdown(void)
+void xenus_bait_shutdown(void)
 {
     int i;
 
@@ -284,7 +284,7 @@ void scde_bait_shutdown(void)
         return;
     if (bait_owned && bait_root[0]) {
         /* remove only files we track + subdirs we made; bounded */
-        for (i = 0; i < SCDE_BAIT_MAX; i++) {
+        for (i = 0; i < XENUS_BAIT_MAX; i++) {
             if (entries[i].used)
                 unlink(entries[i].path);
         }
@@ -296,7 +296,7 @@ void scde_bait_shutdown(void)
             int k;
 
             for (k = 0; subs[k]; k++) {
-                char sub[SCDE_BAIT_PATH_LEN];
+                char sub[XENUS_BAIT_PATH_LEN];
                 size_t rl = strlen(bait_root);
                 size_t sl = strlen(subs[k]);
 
@@ -317,72 +317,72 @@ void scde_bait_shutdown(void)
     bait_on = 1;
 }
 
-int scde_bait_active(void)
+int xenus_bait_active(void)
 {
     return bait_inited;
 }
 
-const char *scde_bait_dir(void)
+const char *xenus_bait_dir(void)
 {
     return bait_inited ? bait_root : "";
 }
 
-int scde_bait_enable(void)
+int xenus_bait_enable(void)
 {
     if (!bait_inited)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     bait_on = 1;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_bait_disable(void)
+int xenus_bait_disable(void)
 {
     if (!bait_inited)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     bait_on = 0;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_bait_enabled(void)
+int xenus_bait_enabled(void)
 {
     return bait_inited && bait_on;
 }
 
 /* -------------------------------------------------------------- create -- */
 
-int scde_bait_create(int kind, const char *leaf)
+int xenus_bait_create(int kind, const char *leaf)
 {
-    char sub[SCDE_BAIT_PATH_LEN];
-    char full[SCDE_BAIT_PATH_LEN];
+    char sub[XENUS_BAIT_PATH_LEN];
+    char full[XENUS_BAIT_PATH_LEN];
     bait_entry_t *e;
     const char *body;
     int fd;
     size_t left, done = 0, body_len;
 
     if (!bait_inited)
-        return SCDE_ERR_STATE;
-    if (kind < 0 || kind >= SCDE_BAIT_KIND_COUNT)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_STATE;
+    if (kind < 0 || kind >= XENUS_BAIT_KIND_COUNT)
+        return XENUS_ERR_ARG;
     if (!leaf_ok(leaf))
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
 
     {
-        const char *kname = scde_bait_kind_name(kind);
+        const char *kname = xenus_bait_kind_name(kind);
         size_t rl = strlen(bait_root);
         size_t kl = strlen(kname);
         size_t ll = strlen(leaf);
         size_t sl;
 
         if (rl + 1 + kl + 1 > sizeof(sub))
-            return SCDE_ERR_ARG;
+            return XENUS_ERR_ARG;
         memcpy(sub, bait_root, rl);
         sub[rl] = '/';
         memcpy(sub + rl + 1, kname, kl + 1);
-        if (ensure_dir(sub) != SCDE_OK)
-            return SCDE_ERR_IO;
+        if (ensure_dir(sub) != XENUS_OK)
+            return XENUS_ERR_IO;
         sl = strlen(sub);
         if (sl + 1 + ll + 1 > sizeof(full))
-            return SCDE_ERR_ARG;
+            return XENUS_ERR_ARG;
         memcpy(full, sub, sl);
         full[sl] = '/';
         memcpy(full + sl + 1, leaf, ll + 1);
@@ -392,14 +392,14 @@ int scde_bait_create(int kind, const char *leaf)
     if (!e) {
         e = alloc_entry();
         if (!e)
-            return SCDE_ERR_FULL;
+            return XENUS_ERR_FULL;
     }
     body = dummy_for(kind, leaf);
     body_len = strlen(body);
 
     fd = open(full, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
     if (fd < 0)
-        return SCDE_ERR_IO;
+        return XENUS_ERR_IO;
     left = body_len;
     while (left > 0) {
         ssize_t w = write(fd, body + done, left);
@@ -409,7 +409,7 @@ int scde_bait_create(int kind, const char *leaf)
                 continue;
             close(fd);
             unlink(full);
-            return SCDE_ERR_IO;
+            return XENUS_ERR_IO;
         }
         done += (size_t)w;
         left -= (size_t)w;
@@ -422,37 +422,37 @@ int scde_bait_create(int kind, const char *leaf)
     memset(e, 0, sizeof(*e));
     e->used = 1;
     e->kind = kind;
-    snprintf(e->id, sizeof(e->id), "%s/%s", scde_bait_kind_name(kind),
+    snprintf(e->id, sizeof(e->id), "%s/%s", xenus_bait_kind_name(kind),
              leaf);
     snprintf(e->path, sizeof(e->path), "%s", full);
     snapshot(e);
 
-    audit_with_meta(SCDE_AUDIT_BAIT_CREATED, e->id, 0, "create",
-                    SCDE_TRUST_UNKNOWN);
-    return SCDE_OK;
+    audit_with_meta(XENUS_AUDIT_BAIT_CREATED, e->id, 0, "create",
+                    XENUS_TRUST_UNKNOWN);
+    return XENUS_OK;
 }
 
-int scde_bait_create_defaults(void)
+int xenus_bait_create_defaults(void)
 {
     static const struct {
         int kind;
         const char *leaf;
     } defs[] = {
-        { SCDE_BAIT_CONFIG, "decoy-settings.conf" },
-        { SCDE_BAIT_CACHE, "decoy-thumb.cache" },
-        { SCDE_BAIT_DOCUMENT, "decoy-notes.txt" },
-        { SCDE_BAIT_EXECUTABLE, "decoy-helper.sh" },
-        { SCDE_BAIT_APPDATA, "decoy-profile.json" },
+        { XENUS_BAIT_CONFIG, "decoy-settings.conf" },
+        { XENUS_BAIT_CACHE, "decoy-thumb.cache" },
+        { XENUS_BAIT_DOCUMENT, "decoy-notes.txt" },
+        { XENUS_BAIT_EXECUTABLE, "decoy-helper.sh" },
+        { XENUS_BAIT_APPDATA, "decoy-profile.json" },
     };
     size_t i;
-    int rc = SCDE_OK;
+    int rc = XENUS_OK;
 
     if (!bait_inited)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     for (i = 0; i < sizeof(defs) / sizeof(defs[0]); i++) {
-        int st = scde_bait_create(defs[i].kind, defs[i].leaf);
+        int st = xenus_bait_create(defs[i].kind, defs[i].leaf);
 
-        if (st != SCDE_OK)
+        if (st != XENUS_OK)
             rc = st;
     }
     return rc;
@@ -460,19 +460,19 @@ int scde_bait_create_defaults(void)
 
 /* -------------------------------------------------------------- detect -- */
 
-int scde_bait_report(const char *decoy_path, const char *op, int trust)
+int xenus_bait_report(const char *decoy_path, const char *op, int trust)
 {
     bait_entry_t *e;
-    char id[SCDE_BAIT_ID_LEN];
+    char id[XENUS_BAIT_ID_LEN];
     int exec_like = 0;
 
     if (!bait_inited)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     if (!decoy_path || !*decoy_path || !op || !*op)
-        return SCDE_ERR_ARG;
-    if (trust != SCDE_TRUST_TRUSTED && trust != SCDE_TRUST_UNTRUSTED &&
-        trust != SCDE_TRUST_BLOCKED && trust != SCDE_TRUST_UNKNOWN)
-        trust = SCDE_TRUST_UNKNOWN;
+        return XENUS_ERR_ARG;
+    if (trust != XENUS_TRUST_TRUSTED && trust != XENUS_TRUST_UNTRUSTED &&
+        trust != XENUS_TRUST_BLOCKED && trust != XENUS_TRUST_UNKNOWN)
+        trust = XENUS_TRUST_UNKNOWN;
 
     e = find_by_path(decoy_path);
     if (e)
@@ -484,27 +484,27 @@ int scde_bait_report(const char *decoy_path, const char *op, int trust)
                  strcmp(op, "spawn") == 0);
     if (exec_like) {
         bait_hits_total++;
-        audit_with_meta(SCDE_AUDIT_BAIT_EXECUTION_ATTEMPT, id, 85, op,
+        audit_with_meta(XENUS_AUDIT_BAIT_EXECUTION_ATTEMPT, id, 85, op,
                         trust);
-        return SCDE_OK;
+        return XENUS_OK;
     }
     if (!bait_on)
-        return SCDE_OK;             /* disabled: inert, still harmless */
+        return XENUS_OK;             /* disabled: inert, still harmless */
     bait_hits_total++;
-    audit_with_meta(SCDE_AUDIT_BAIT_ACCESSED, id, 60, op, trust);
-    return SCDE_OK;
+    audit_with_meta(XENUS_AUDIT_BAIT_ACCESSED, id, 60, op, trust);
+    return XENUS_OK;
 }
 
-int scde_bait_check(void)
+int xenus_bait_check(void)
 {
     int i, new_hits = 0;
     struct stat st;
 
     if (!bait_inited)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     if (!bait_on)
         return 0;
-    for (i = 0; i < SCDE_BAIT_MAX; i++) {
+    for (i = 0; i < XENUS_BAIT_MAX; i++) {
         bait_entry_t *e = &entries[i];
 
         if (!e->used)
@@ -516,8 +516,8 @@ int scde_bait_check(void)
                 e->exists = 0;
                 bait_hits_total++;
                 new_hits++;
-                audit_with_meta(SCDE_AUDIT_BAIT_DELETED, e->id, 70,
-                                "unlink", SCDE_TRUST_UNKNOWN);
+                audit_with_meta(XENUS_AUDIT_BAIT_DELETED, e->id, 70,
+                                "unlink", XENUS_TRUST_UNKNOWN);
             }
             continue;
         }
@@ -528,8 +528,8 @@ int scde_bait_check(void)
             e->mode = st.st_mode & 07777;
             bait_hits_total++;
             new_hits++;
-            audit_with_meta(SCDE_AUDIT_BAIT_MODIFIED, e->id, 60,
-                            "recreated", SCDE_TRUST_UNKNOWN);
+            audit_with_meta(XENUS_AUDIT_BAIT_MODIFIED, e->id, 60,
+                            "recreated", XENUS_TRUST_UNKNOWN);
             continue;
         }
         /* executable bit appeared: someone wants to run the decoy.
@@ -540,8 +540,8 @@ int scde_bait_check(void)
 
             bait_hits_total++;
             new_hits++;
-            audit_with_meta(SCDE_AUDIT_BAIT_EXECUTION_ATTEMPT, e->id,
-                            85, "exec-bit", SCDE_TRUST_UNKNOWN);
+            audit_with_meta(XENUS_AUDIT_BAIT_EXECUTION_ATTEMPT, e->id,
+                            85, "exec-bit", XENUS_TRUST_UNKNOWN);
             if (wfd >= 0) {
                 fchmod(wfd, mode_for(e->kind));  /* back to inert */
                 close(wfd);
@@ -551,8 +551,8 @@ int scde_bait_check(void)
             /* a link where a decoy should be: report, never touch it */
             bait_hits_total++;
             new_hits++;
-            audit_with_meta(SCDE_AUDIT_BAIT_MODIFIED, e->id, 60,
-                            "replaced-by-symlink", SCDE_TRUST_UNKNOWN);
+            audit_with_meta(XENUS_AUDIT_BAIT_MODIFIED, e->id, 60,
+                            "replaced-by-symlink", XENUS_TRUST_UNKNOWN);
             e->size = st.st_size;
             e->mtime = st.st_mtime;
             e->mode = st.st_mode & 07777;
@@ -562,15 +562,15 @@ int scde_bait_check(void)
             e->mode = st.st_mode & 07777;
             bait_hits_total++;
             new_hits++;
-            audit_with_meta(SCDE_AUDIT_BAIT_MODIFIED, e->id, 60,
-                            "modified", SCDE_TRUST_UNKNOWN);
+            audit_with_meta(XENUS_AUDIT_BAIT_MODIFIED, e->id, 60,
+                            "modified", XENUS_TRUST_UNKNOWN);
         }
         /* unreadable decoy (someone chmod 000 it): permission telemetry */
         if (access(e->path, R_OK) != 0) {
             bait_hits_total++;
             new_hits++;
-            audit_with_meta(SCDE_AUDIT_BAIT_PERMISSION_DENIED, e->id,
-                            50, "perm", SCDE_TRUST_UNKNOWN);
+            audit_with_meta(XENUS_AUDIT_BAIT_PERMISSION_DENIED, e->id,
+                            50, "perm", XENUS_TRUST_UNKNOWN);
         }
     }
     return new_hits;
@@ -578,47 +578,47 @@ int scde_bait_check(void)
 
 /* -------------------------------------------------------------- inspect -- */
 
-int scde_bait_count(void)
+int xenus_bait_count(void)
 {
     int i, n = 0;
 
     if (!bait_inited)
         return 0;
-    for (i = 0; i < SCDE_BAIT_MAX; i++) {
+    for (i = 0; i < XENUS_BAIT_MAX; i++) {
         if (entries[i].used)
             n++;
     }
     return n;
 }
 
-int scde_bait_hits(void)
+int xenus_bait_hits(void)
 {
     return bait_hits_total;
 }
 
-int scde_bait_path(int index, char *out, size_t out_len)
+int xenus_bait_path(int index, char *out, size_t out_len)
 {
     int i, seen = 0;
 
     if (!bait_inited || !out || out_len == 0)
-        return SCDE_ERR_ARG;
-    for (i = 0; i < SCDE_BAIT_MAX; i++) {
+        return XENUS_ERR_ARG;
+    for (i = 0; i < XENUS_BAIT_MAX; i++) {
         if (!entries[i].used)
             continue;
         if (seen == index) {
             snprintf(out, out_len, "%s", entries[i].path);
-            return SCDE_OK;
+            return XENUS_OK;
         }
         seen++;
     }
-    return SCDE_ERR_NOT_FOUND;
+    return XENUS_ERR_NOT_FOUND;
 }
 
 /*
  * Dummy hygiene: every decoy must carry the decoy marker and must not
  * contain obvious real-credential material.  Bounded read (first 4 KiB).
  */
-int scde_bait_verify_dummy(void)
+int xenus_bait_verify_dummy(void)
 {
     static const char *const banned[] = {
         "BEGIN RSA PRIVATE KEY",
@@ -631,8 +631,8 @@ int scde_bait_verify_dummy(void)
     int i;
 
     if (!bait_inited)
-        return SCDE_ERR_STATE;
-    for (i = 0; i < SCDE_BAIT_MAX; i++) {
+        return XENUS_ERR_STATE;
+    for (i = 0; i < XENUS_BAIT_MAX; i++) {
         bait_entry_t *e = &entries[i];
         char buf[4096];
         int fd;
@@ -647,21 +647,21 @@ int scde_bait_verify_dummy(void)
         n = read(fd, buf, sizeof(buf) - 1);
         close(fd);
         if (n <= 0)
-            return SCDE_ERR;
+            return XENUS_ERR;
         buf[n] = '\0';
         if (strstr(buf, BAIT_MARKER) == NULL)
-            return SCDE_ERR;
+            return XENUS_ERR;
         for (k = 0; banned[k]; k++) {
             if (strstr(buf, banned[k]) != NULL)
-                return SCDE_ERR;
+                return XENUS_ERR;
         }
         /* symlinks must never point at the real filesystem */
         {
             struct stat st;
 
             if (lstat(e->path, &st) == 0 && S_ISLNK(st.st_mode))
-                return SCDE_ERR;
+                return XENUS_ERR;
         }
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }

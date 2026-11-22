@@ -1,7 +1,7 @@
 /*
- * SCDE - small modal message box (used when a program is not installed)
+ * XENUS - small modal message box (used when a program is not installed)
  */
-#include "scde.h"
+#include "xenus.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -119,7 +119,7 @@ void msgbox_show(const char *title, const char *text)
     if (mb_open)
         msgbox_hide();
 
-    str_copy(mb_title, sizeof(mb_title), title ? title : "SCDE");
+    str_copy(mb_title, sizeof(mb_title), title ? title : "XENUS");
     mb_w = MB_W;
     if (mb_w > sc.sw - 40)
         mb_w = sc.sw - 40;
@@ -137,7 +137,7 @@ void msgbox_show(const char *title, const char *text)
                                CopyFromParent,
                                CWOverrideRedirect | CWBackPixel | CWEventMask,
                                &wa);
-        XStoreName(sc.dpy, mb_win, "scde-msgbox");
+        XStoreName(sc.dpy, mb_win, "xenus-msgbox");
     } else {
         XMoveResizeWindow(sc.dpy, mb_win, mb_x, mb_y, (unsigned)mb_w,
                           (unsigned)mb_h);

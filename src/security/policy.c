@@ -1,14 +1,14 @@
 /*
- * SCDE Security Layer - security policy and the policy gate.
+ * XENUS Security Layer - security policy and the policy gate.
  *
  * Policies are simple 0/1 switches with safe defaults; everything that is
  * not explicitly allowed is refused (fail-closed) at the gate.
  */
-#include <scde/security.h>
+#include <xenus/security.h>
 
 #include "security_internal.h"
 
-static const int defaults[SCDE_POL_COUNT] = {
+static const int defaults[XENUS_POL_COUNT] = {
     0,     /* ALLOW_UNTRUSTED_PLUGINS: in-process native code requires
               TRUSTED by default; enabling this is an explicit unsafe
               override (documented in docs/SECURITY.md) */
@@ -19,7 +19,7 @@ static const int defaults[SCDE_POL_COUNT] = {
     1      /* AUDIT_FILE_SCANS */
 };
 
-static int values[SCDE_POL_COUNT];
+static int values[XENUS_POL_COUNT];
 static int values_ready;
 
 static void ensure_defaults(void)
@@ -28,73 +28,73 @@ static void ensure_defaults(void)
 
     if (values_ready)
         return;
-    for (i = 0; i < SCDE_POL_COUNT; i++)
+    for (i = 0; i < XENUS_POL_COUNT; i++)
         values[i] = defaults[i];
     values_ready = 1;
 }
 
-int scde_policy_set(int key, int value)
+int xenus_policy_set(int key, int value)
 {
     ensure_defaults();
-    if (key < 0 || key >= SCDE_POL_COUNT)
-        return SCDE_ERR_ARG;
+    if (key < 0 || key >= XENUS_POL_COUNT)
+        return XENUS_ERR_ARG;
     if (value != 0 && value != 1)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     values[key] = value;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_policy_get(int key)
+int xenus_policy_get(int key)
 {
     ensure_defaults();
-    if (key < 0 || key >= SCDE_POL_COUNT)
+    if (key < 0 || key >= XENUS_POL_COUNT)
         return -1;
     return values[key];
 }
 
-int scde_policy_default(int key)
+int xenus_policy_default(int key)
 {
-    if (key < 0 || key >= SCDE_POL_COUNT)
+    if (key < 0 || key >= XENUS_POL_COUNT)
         return -1;
     return defaults[key];
 }
 
-int scde_policy_reset(void)
+int xenus_policy_reset(void)
 {
     int i;
 
-    for (i = 0; i < SCDE_POL_COUNT; i++)
+    for (i = 0; i < XENUS_POL_COUNT; i++)
         values[i] = defaults[i];
     values_ready = 1;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_security_allow(const scde_scan_result_t *result)
+int xenus_security_allow(const xenus_scan_result_t *result)
 {
     if (!result)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     ensure_defaults();
 
     switch (result->status) {
-    case SCDE_THREAT_SAFE:
-    case SCDE_THREAT_UNKNOWN:
-        return SCDE_OK;
-    case SCDE_THREAT_SUSPICIOUS:
-        if (values[SCDE_POL_DENY_SUSPICIOUS]) {
-            scde__stats()->denied++;
-            scde_audit_log(SCDE_AUDIT_POLICY_DENIED, result->detail,
+    case XENUS_THREAT_SAFE:
+    case XENUS_THREAT_UNKNOWN:
+        return XENUS_OK;
+    case XENUS_THREAT_SUSPICIOUS:
+        if (values[XENUS_POL_DENY_SUSPICIOUS]) {
+            xenus__stats()->denied++;
+            xenus_audit_log(XENUS_AUDIT_POLICY_DENIED, result->detail,
                            result->risk, "suspicious refused by policy");
-            return SCDE_ERR;
+            return XENUS_ERR;
         }
-        return SCDE_OK;
-    case SCDE_THREAT_MALICIOUS:
-    case SCDE_THREAT_BLOCKED:
-        scde__stats()->denied++;
-        scde_audit_log(SCDE_AUDIT_POLICY_DENIED, result->detail, result->risk,
+        return XENUS_OK;
+    case XENUS_THREAT_MALICIOUS:
+    case XENUS_THREAT_BLOCKED:
+        xenus__stats()->denied++;
+        xenus_audit_log(XENUS_AUDIT_POLICY_DENIED, result->detail, result->risk,
                        "malicious refused by policy");
-        return SCDE_ERR;
+        return XENUS_ERR;
     default:
-        return SCDE_ERR;           /* unknown status: fail closed */
+        return XENUS_ERR;           /* unknown status: fail closed */
     }
 }
 
@@ -103,57 +103,57 @@ int scde_security_allow(const scde_scan_result_t *result)
  * Pure decision: no side effects, no auditing (callers audit outcomes).
  * See docs/SECURITY.md for the full mapping table.
  */
-int scde_security_decide(const scde_scan_result_t *result,
-                         scde_decision_t *out)
+int xenus_security_decide(const xenus_scan_result_t *result,
+                         xenus_decision_t *out)
 {
-    scde_security_features_t f;
+    xenus_security_features_t f;
 
     if (!out)
-        return SCDE_ERR_ARG;
-    *out = SCDE_DECIDE_DENY;            /* fail-closed default */
+        return XENUS_ERR_ARG;
+    *out = XENUS_DECIDE_DENY;            /* fail-closed default */
     if (!result)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     ensure_defaults();
 
     switch (result->status) {
-    case SCDE_THREAT_BLOCKED:
-    case SCDE_THREAT_MALICIOUS:
-        return SCDE_OK;                 /* known-bad / malicious: DENY */
-    case SCDE_THREAT_SUSPICIOUS:
-        if (values[SCDE_POL_DENY_SUSPICIOUS])
-            return SCDE_OK;             /* DENY */
-        if (result->trust == SCDE_TRUST_TRUSTED) {
-            *out = SCDE_DECIDE_ALLOW;   /* trusted freedom */
-            return SCDE_OK;
+    case XENUS_THREAT_BLOCKED:
+    case XENUS_THREAT_MALICIOUS:
+        return XENUS_OK;                 /* known-bad / malicious: DENY */
+    case XENUS_THREAT_SUSPICIOUS:
+        if (values[XENUS_POL_DENY_SUSPICIOUS])
+            return XENUS_OK;             /* DENY */
+        if (result->trust == XENUS_TRUST_TRUSTED) {
+            *out = XENUS_DECIDE_ALLOW;   /* trusted freedom */
+            return XENUS_OK;
         }
-        scde_security_features(&f);
-        if (f.sandbox == SCDE_FEATURE_UNAVAILABLE)
-            return SCDE_OK;             /* cannot isolate: DENY */
-        *out = SCDE_DECIDE_SANDBOX;
-        return SCDE_OK;
-    case SCDE_THREAT_SAFE:
-    case SCDE_THREAT_UNKNOWN:
+        xenus_security_features(&f);
+        if (f.sandbox == XENUS_FEATURE_UNAVAILABLE)
+            return XENUS_OK;             /* cannot isolate: DENY */
+        *out = XENUS_DECIDE_SANDBOX;
+        return XENUS_OK;
+    case XENUS_THREAT_SAFE:
+    case XENUS_THREAT_UNKNOWN:
         break;
     default:
-        return SCDE_OK;                 /* unknown status: DENY */
+        return XENUS_OK;                 /* unknown status: DENY */
     }
 
     switch (result->trust) {
-    case SCDE_TRUST_BLOCKED:
-        return SCDE_OK;                 /* DENY */
-    case SCDE_TRUST_TRUSTED:
-        *out = SCDE_DECIDE_ALLOW;
-        return SCDE_OK;
-    case SCDE_TRUST_UNTRUSTED:
-        scde_security_features(&f);
-        if (f.sandbox == SCDE_FEATURE_UNAVAILABLE)
-            return SCDE_OK;             /* fail-closed: no sandbox, no run */
-        *out = SCDE_DECIDE_SANDBOX;
-        return SCDE_OK;
+    case XENUS_TRUST_BLOCKED:
+        return XENUS_OK;                 /* DENY */
+    case XENUS_TRUST_TRUSTED:
+        *out = XENUS_DECIDE_ALLOW;
+        return XENUS_OK;
+    case XENUS_TRUST_UNTRUSTED:
+        xenus_security_features(&f);
+        if (f.sandbox == XENUS_FEATURE_UNAVAILABLE)
+            return XENUS_OK;             /* fail-closed: no sandbox, no run */
+        *out = XENUS_DECIDE_SANDBOX;
+        return XENUS_OK;
     default:
         /* UNKNOWN trust: restricted execution is the policy default -
          * not "safe", not unrestricted */
-        *out = SCDE_DECIDE_RESTRICT;
-        return SCDE_OK;
+        *out = XENUS_DECIDE_RESTRICT;
+        return XENUS_OK;
     }
 }

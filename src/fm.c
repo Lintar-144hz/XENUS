@@ -1,6 +1,6 @@
 #define _XOPEN_SOURCE 700
 /*
- * SCDE - built-in file manager (pure Xlib, no toolkit)
+ * XENUS - built-in file manager (pure Xlib, no toolkit)
  *
  * Harbor layout: sidebar places (Home, Desktop, Documents, ...), toolbar
  * with Up / Back / Home / New Folder / Refresh + path field + search,
@@ -8,7 +8,8 @@
  * and files (images -> viewer, video/audio -> player, rest -> xdg-open).
  * Right-click: Open / Rename / Delete / Properties / Set as wallpaper.
  */
-#include "scde.h"
+#include "xenus.h"
+#include "cache.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -111,6 +112,33 @@ static int side_fav_end;                 /* drawn favorite rows (clickable) */
 static int side_loc_drawn;               /* Computer row drawn (clickable) */
 
 enum { BTN_UP, BTN_BACK, BTN_FWD, BTN_NEW, BTN_REFRESH };
+
+static void fm_cache_release(void)
+{
+    if (fm_is_open)
+        return;
+    free(ents);
+    ents = NULL;
+    n_ents = ents_cap = 0;
+    free(vis_idx);
+    vis_idx = NULL;
+    n_vis = vis_cap = 0;
+    sel = scroll = hover = -1;
+    xenus_cache_set("file-manager", 0, 1);
+}
+
+static void fm_cache_sync(void)
+{
+    size_t bytes = 0;
+
+    if (ents_cap > 0)
+        bytes += (size_t)ents_cap * sizeof(*ents);
+    if (vis_cap > 0)
+        bytes += (size_t)vis_cap * sizeof(*vis_idx);
+    if (xenus_cache_register("file-manager", fm_cache_release) != 0)
+        return;
+    xenus_cache_set("file-manager", bytes, !fm_is_open);
+}
 
 /* ------------------------------------------------------------ helpers -- */
 
@@ -360,13 +388,13 @@ static void fm_set_name(void)
 
     if (fm_win == None)
         return;
-    /* keep the "scde-fm: <cwd>" prefix (tests match it); the filter
+    /* keep the "xenus-fm: <cwd>" prefix (tests match it); the filter
        suffix is a stable hook for humans and regression tests alike */
     if (sbuf[0] != '\0')
-        snprintf(title, sizeof(title), "scde-fm: %s  [filter '%s': %d]",
+        snprintf(title, sizeof(title), "xenus-fm: %s  [filter '%s': %d]",
                  cwd, sbuf, n_vis);
     else
-        snprintf(title, sizeof(title), "scde-fm: %s", cwd);
+        snprintf(title, sizeof(title), "xenus-fm: %s", cwd);
     XStoreName(sc.dpy, fm_win, title);
 }
 
@@ -448,6 +476,7 @@ static void fm_reload(void)
         scroll = 0;
     fm_refilter();
     fm_set_name();
+    fm_cache_sync();
 }
 
 static int fm_vis_row_of_sel(void)
@@ -641,7 +670,7 @@ static void fm_layout(void)
 
     n_btn = 0;
     x = FM_PAD;
-    for (i = 0; i < FM_MAX_BTNS; i++) {
+    for (i = 0; i < 5; i++) {
         int w = text_width(labels[ids[i]]) + 20;
 
         if (w < 46)
@@ -1086,7 +1115,7 @@ static void fm_set_wallpaper(void)
     if (config_set_wallpaper(full) != 0) {
         msgbox_show("Wallpaper not saved",
                     "Could not write wallpaper= into\n"
-                    "~/.config/scde/config");
+                    "~/.config/xenus/config");
         return;
     }
     wallpaper_apply();
@@ -1364,6 +1393,7 @@ void fm_show(void)
     last_click_i = -1;
     fm_set_name();
     fm_is_open = 1;
+    fm_cache_sync();
     XMapRaised(sc.dpy, fm_win);
     focus_track(fm_win);
     taskbar_register(fm_win, TASK_APP_FM, "File Manager");
@@ -1399,6 +1429,7 @@ void fm_hide(void)
     taskbar_set_hidden(fm_win, 1);
     panel_update();
     XUnmapWindow(sc.dpy, fm_win);
+    fm_cache_sync();
     XFlush(sc.dpy);
 }
 
@@ -1418,6 +1449,7 @@ void fm_close(void)
         XFlush(sc.dpy);
     }
     taskbar_unregister(fm_win);
+    fm_cache_sync();
     panel_update();
 }
 
@@ -1439,6 +1471,7 @@ void fm_cleanup(void)
     free(vis_idx);
     vis_idx = NULL;
     n_vis = vis_cap = 0;
+    xenus_cache_unregister("file-manager");
     if (fm_win != None) {
         taskbar_unregister(fm_win);
         XDestroyWindow(sc.dpy, fm_win);

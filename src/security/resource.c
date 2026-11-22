@@ -1,13 +1,13 @@
 /*
- * SCDE resource protection - kernel-enforced limits for child processes.
+ * XENUS resource protection - kernel-enforced limits for child processes.
  *
  * Only the calling (child) process is ever limited here.  The supervisor
- * (scde_resource_constrain) only signals the supervised pid - never a
- * process group, never SCDE itself.
+ * (xenus_resource_constrain) only signals the supervised pid - never a
+ * process group, never XENUS itself.
  */
 #define _DEFAULT_SOURCE
-#include <scde/security.h>
-#include <scde/security_resource.h>
+#include <xenus/security.h>
+#include <xenus/security_resource.h>
 
 #include <errno.h>
 #include <signal.h>
@@ -20,47 +20,47 @@
 #include <time.h>
 #include <unistd.h>
 
-static scde_resource_limits_t active;
+static xenus_resource_limits_t active;
 static int have_custom;
 
-void scde_resource_defaults(scde_resource_limits_t *out)
+void xenus_resource_defaults(xenus_resource_limits_t *out)
 {
     if (!out)
         return;
     /* 3 GiB sandbox ceiling per sandboxed process (RLIMIT_DATA, kernel-
      * enforced in the child before exec).  RLIMIT_DATA is used instead of
      * RLIMIT_AS because modern browsers reserve far more virtual address
-     * space than they ever commit as RAM.  SCDE imposes no CPU quota of
+     * space than they ever commit as RAM.  XENUS imposes no CPU quota of
      * its own (cpu_seconds = 0: the host scheduler decides). */
     out->ram_bytes = 3072ul * 1024ul * 1024ul;   /* 3072 MiB = 3 GiB */
-    out->cpu_seconds = 0;                         /* no SCDE CPU quota */
+    out->cpu_seconds = 0;                         /* no XENUS CPU quota */
     out->nproc = 64;                             /* child processes */
     out->nofile = 128;                           /* open files */
     out->fsize_bytes = 256ul * 1024ul * 1024ul;  /* 256 MiB files */
     out->wall_seconds = 60;                      /* supervisor wall clock */
 }
 
-int scde_resource_set(const scde_resource_limits_t *lim)
+int xenus_resource_set(const xenus_resource_limits_t *lim)
 {
     if (!lim) {
         have_custom = 0;
         memset(&active, 0, sizeof(active));
-        return SCDE_OK;
+        return XENUS_OK;
     }
     active = *lim;
     have_custom = 1;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_resource_get(scde_resource_limits_t *out)
+int xenus_resource_get(xenus_resource_limits_t *out)
 {
     if (!out)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     if (!have_custom)
-        scde_resource_defaults(out);
+        xenus_resource_defaults(out);
     else
         *out = active;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 static int clamp_rlimit(int res, rlim_t value)
@@ -90,12 +90,12 @@ static int cap_rlimit(int res, rlim_t value)
     return 0;
 }
 
-int scde_resource_apply(void)
+int xenus_resource_apply(void)
 {
-    scde_resource_limits_t lim;
+    xenus_resource_limits_t lim;
     int failures = 0;
 
-    scde_resource_get(&lim);
+    xenus_resource_get(&lim);
 
     /* core dumps off, always */
     {
@@ -133,7 +133,7 @@ int scde_resource_apply(void)
         failures++;
 #endif
     }
-    /* no SCDE CPU quota unless explicitly configured (cpu_seconds == 0
+    /* no XENUS CPU quota unless explicitly configured (cpu_seconds == 0
        means the host scheduler decides; callers must not read a missing
        quota as a guaranteed CPU share) */
     if (lim.cpu_seconds > 0) {
@@ -145,8 +145,8 @@ int scde_resource_apply(void)
      * those are reported via the feature probe, but a total failure
      * here means the child must not run loose. */
     if (failures > 2)
-        return SCDE_ERR;
-    return SCDE_OK;
+        return XENUS_ERR;
+    return XENUS_OK;
 }
 
 static int wait_ms(pid_t pid, unsigned int ms, int *status_out)
@@ -178,13 +178,13 @@ static int wait_ms(pid_t pid, unsigned int ms, int *status_out)
     }
 }
 
-int scde_resource_constrain(pid_t pid, unsigned int grace_ms,
+int xenus_resource_constrain(pid_t pid, unsigned int grace_ms,
                              int *status_out)
 {
     int st = 0;
 
     if (pid <= 1)
-        return 0;                   /* never touch init/SCDE/system */
+        return 0;                   /* never touch init/XENUS/system */
     if (pid == getpid())
         return 0;                   /* never terminate ourselves */
     if (grace_ms > 30000)
@@ -210,14 +210,14 @@ int scde_resource_constrain(pid_t pid, unsigned int grace_ms,
     return 0;
 }
 
-int scde_resource_describe(char *out, size_t out_len)
+int xenus_resource_describe(char *out, size_t out_len)
 {
-    scde_resource_limits_t lim;
+    xenus_resource_limits_t lim;
     char cpu[24];
 
     if (!out || out_len == 0)
-        return SCDE_ERR_ARG;
-    scde_resource_get(&lim);
+        return XENUS_ERR_ARG;
+    xenus_resource_get(&lim);
     if (lim.cpu_seconds > 0)
         snprintf(cpu, sizeof(cpu), "cpu=%us", lim.cpu_seconds);
     else
@@ -226,5 +226,5 @@ int scde_resource_describe(char *out, size_t out_len)
              lim.ram_bytes / (1024ul * 1024ul), cpu,
              lim.nproc, lim.nofile, lim.fsize_bytes / (1024ul * 1024ul),
              lim.wall_seconds);
-    return SCDE_OK;
+    return XENUS_OK;
 }

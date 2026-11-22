@@ -1,6 +1,7 @@
-#include "scde.h"
+#include "xenus.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 
 #define DOCK_MARGIN  8
@@ -24,6 +25,7 @@ typedef struct {
     int task;
     int pin;
     int kind;
+    int count;                  /* windows in this application group */
 } DockItem;
 
 static DockItem ditems[DOCK_MAX];
@@ -79,12 +81,45 @@ static void dock_layout(void)
         ditems[nditems].pin = pins[i];
         ditems[nditems].task = -1;
         ditems[nditems].kind = UI_ICON_GENERIC;
+        ditems[nditems].count = 1;
         nditems++;
     }
     for (i = 0; i < shown; i++) {
+        char key[96], other[96];
+        int j, dup = 0, rep = i, count = 0;
+
+        if (taskbar_app_key(i, key, sizeof(key)) != 0)
+            continue;
+        for (j = 0; j < i; j++) {
+            if (taskbar_app_key(j, other, sizeof(other)) == 0 &&
+                strcmp(key, other) == 0) {
+                dup = 1;
+                break;
+            }
+        }
+        if (dup)
+            continue;
+        for (j = 0; j < shown; j++) {
+            const TaskEntry *t;
+
+            if (taskbar_app_key(j, other, sizeof(other)) != 0 ||
+                strcmp(key, other) != 0)
+                continue;
+            t = taskbar_at(j);
+            if (!t)
+                continue;
+            count++;
+            if (t->focused)
+                rep = j;
+        }
+        if (count == 0)
+            count = 1;
+        if (nditems >= DOCK_MAX)
+            break;
         ditems[nditems].pin = -1;
-        ditems[nditems].task = i;
+        ditems[nditems].task = rep;
         ditems[nditems].kind = UI_ICON_GENERIC;
+        ditems[nditems].count = count;
         nditems++;
     }
 
@@ -162,6 +197,87 @@ static int pin_hidden(int pin)
     return 0;
 }
 
+static int dock_item_closable(int i)
+{
+    if (i < 0 || i >= nditems)
+        return 0;
+    if (ditems[i].pin == -1)
+        return 1;
+    if (ditems[i].pin == PIN_FILES)
+        return pin_running(PIN_FILES);
+    if (ditems[i].pin == PIN_SECURITY)
+        return pin_running(PIN_SECURITY);
+    return 0;
+}
+
+static void dock_close_pos(int i, int *cx, int *cy)
+{
+    int size = (i == hover_dock) ? DOCK_TILE + 8 : DOCK_TILE;
+    int tx = ditems[i].x - (size - DOCK_TILE) / 2;
+    int ty = DOCK_H - 8 - size;
+
+    *cx = tx + size - 8;
+    *cy = ty + 8;
+}
+
+static int dock_close_hit(int i, int x, int y)
+{
+    int cx, cy, dx, dy;
+
+    dock_close_pos(i, &cx, &cy);
+    dx = x - cx;
+    dy = y - cy;
+    return dx * dx + dy * dy <= 81;
+}
+
+static void dock_close_item(int i)
+{
+    if (!dock_item_closable(i))
+        return;
+    if (ditems[i].pin == -1)
+        taskbar_close(ditems[i].task);
+    else if (ditems[i].pin == PIN_FILES)
+        fm_close();
+    else if (ditems[i].pin == PIN_SECURITY)
+        security_gui_close();
+}
+
+static void dock_context_menu(int i, int x, int y)
+{
+    static MenuEntry items[8];
+    int n = 0;
+    int task = -1;
+
+    if (i < 0 || i >= nditems)
+        return;
+    if (ditems[i].pin == -1)
+        task = ditems[i].task;
+    else if (ditems[i].pin == PIN_FILES)
+        task = taskbar_find_type(TASK_APP_FM);
+    else if (ditems[i].pin == PIN_SECURITY)
+        task = taskbar_find_type(TASK_APP_SECURITY);
+    if (task < 0)
+        return;
+
+#define DOCK_ADD(L, action) do { \
+        str_copy(items[n].label, sizeof(items[0].label), (L)); \
+        if ((action)[0] == '\0') \
+            items[n].cmd[0] = '\0'; \
+        else \
+            snprintf(items[n].cmd, sizeof(items[0].cmd), \
+                     "@wm-task %s %d", (action), task); \
+        n++; \
+    } while (0)
+    DOCK_ADD("Show", "show");
+    DOCK_ADD("Minimize", "minimize");
+    DOCK_ADD("Maximize", "maximize");
+    DOCK_ADD("-", "");
+    DOCK_ADD("Close", "close");
+    DOCK_ADD("Quit", "quit");
+#undef DOCK_ADD
+    menu_show_custom(items, n, x, y);
+}
+
 static void dock_paint(void)
 {
     int i;
@@ -221,26 +337,59 @@ static void dock_paint(void)
             if (!t)
                 continue;
             running = 1;
-            hidden = t->hidden;
-            focused = t->focused;
+            taskbar_group_state(ditems[i].task, NULL, &hidden, &focused);
             title = t->title;
             app_initial(title, initial, sizeof(initial));
             ui_draw_app_icon(sc.dock, UI_ICON_GENERIC, tx, ty, size,
                              hidden, initial[0] ? initial : "?");
+            if (ditems[i].count > 1) {
+                char cnt[16];
+                int bw;
+
+                snprintf(cnt, sizeof(cnt), "%d", ditems[i].count);
+                bw = 8 + text_width_small(cnt);
+                if (bw < 16)
+                    bw = 16;
+                ui_round_fill(sc.dock, tx + size - bw, ty + 1, bw, 15, 7,
+                              ui_accent());
+                draw_text_small(sc.dock, tx + size - bw +
+                                (bw - text_width_small(cnt)) / 2,
+                                ty + 12, 0xffffffUL, cnt);
+            }
         }
 
         if (running) {
             unsigned long dot = focused ? ui_accent()
                                         : ui_mix(cfg.col_panel_fg,
                                                  cfg.col_panel_bg, 28);
+            int dots = ditems[i].count > 0 ? ditems[i].count : 1;
             int ds = focused ? 5 : 4;
+            int k, span;
 
+            if (dots > 4)
+                dots = 4;
             if (hidden)
                 dot = ui_mix(dot, cfg.col_panel_bg, 55);
-            XSetForeground(sc.dpy, sc.gc, dot);
-            XFillArc(sc.dpy, sc.dock, sc.gc,
-                     ditems[i].x + DOCK_TILE / 2 - ds / 2, DOCK_DOT_Y,
-                     (unsigned)ds, (unsigned)ds, 0, 360 * 64);
+            span = dots * 6 - 2;
+            for (k = 0; k < dots; k++) {
+                int dx = ditems[i].x + DOCK_TILE / 2 - span / 2 + k * 6;
+
+                XSetForeground(sc.dpy, sc.gc, dot);
+                XFillArc(sc.dpy, sc.dock, sc.gc, dx, DOCK_DOT_Y,
+                         (unsigned)ds, (unsigned)ds, 0, 360 * 64);
+            }
+        }
+
+        if (hovered && dock_item_closable(i)) {
+            int ccx, ccy;
+
+            dock_close_pos(i, &ccx, &ccy);
+            ui_round_fill(sc.dock, ccx - 8, ccy - 8, 16, 16, 8, 0xe0443eUL);
+            XSetForeground(sc.dpy, sc.gc, 0xffffffUL);
+            XDrawLine(sc.dpy, sc.dock, sc.gc, ccx - 4, ccy - 4,
+                      ccx + 4, ccy + 4);
+            XDrawLine(sc.dpy, sc.dock, sc.gc, ccx + 4, ccy - 4,
+                      ccx - 4, ccy + 4);
         }
     }
     XFlush(sc.dpy);
@@ -253,14 +402,15 @@ void dock_create(void)
     dock_layout();
     wa.override_redirect = True;
     wa.background_pixel = corner_bg;
-    wa.event_mask = ExposureMask | ButtonPressMask | PointerMotionMask;
+    wa.event_mask = ExposureMask | ButtonPressMask | PointerMotionMask |
+                    LeaveWindowMask;
 
     sc.dock = XCreateWindow(sc.dpy, sc.root, dock_x, dock_y,
                             (unsigned)dock_w, (unsigned)DOCK_H, 0,
                             CopyFromParent, InputOutput, CopyFromParent,
                             CWOverrideRedirect | CWBackPixel | CWEventMask,
                             &wa);
-    XStoreName(sc.dpy, sc.dock, "scde-dock");
+    XStoreName(sc.dpy, sc.dock, "xenus-dock");
     ui_shape_round(sc.dock, dock_w, DOCK_H, DOCK_CUT);
     XMapRaised(sc.dpy, sc.dock);
     dock_paint();
@@ -325,14 +475,14 @@ static int dock_hit(int x)
     return -1;
 }
 
-static void pin_activate(int pin)
+static void pin_activate(int pin, int anchor_y)
 {
     switch (pin) {
     case PIN_LAUNCHER:
         if (menu_is_open())
             menu_hide();
         else
-            menu_show();
+            menu_show_above_dock(anchor_y);
         break;
     case PIN_FILES:
         fm_show();
@@ -351,19 +501,6 @@ static void pin_activate(int pin)
     }
 }
 
-static void pin_minimize(int pin)
-{
-    if (pin == PIN_FILES) {
-        if (fm_open())
-            fm_hide();
-        return;
-    }
-    if (pin == PIN_SECURITY) {
-        if (security_gui_open())
-            security_gui_hide();
-        return;
-    }
-}
 
 int dock_button_press(XButtonEvent *ev)
 {
@@ -378,13 +515,22 @@ int dock_button_press(XButtonEvent *ev)
     if (i < 0)
         return 1;
 
+    if (ev->button == Button1 && hover_dock == i &&
+        dock_close_hit(i, ev->x, ev->y) && dock_item_closable(i)) {
+        dock_close_item(i);
+        return 1;
+    }
+
+    if (ev->button == Button3) {
+        dock_context_menu(i, ev->x_root, ev->y_root);
+        return 1;
+    }
+
     if (ditems[i].pin != -1) {
         int pin = ditems[i].pin;
 
         if (ev->button == Button1)
-            pin_activate(pin);
-        else if (ev->button == Button3)
-            pin_minimize(pin);
+            pin_activate(pin, dock_y);
         else if (ev->button == Button2 &&
                  (pin == PIN_FILES || pin == PIN_SECURITY)) {
             if (pin == PIN_FILES)
@@ -399,25 +545,6 @@ int dock_button_press(XButtonEvent *ev)
         taskbar_activate(ditems[i].task);
     else if (ev->button == Button2)
         taskbar_close(ditems[i].task);
-    else if (ev->button == Button3) {
-        const TaskEntry *t = taskbar_at(ditems[i].task);
-
-        if (t) {
-            if (t->client)
-                client_minimize(t->client, t->hidden ? 0 : 1);
-            else if (t->app_type == TASK_APP_FM) {
-                if (fm_open())
-                    fm_hide();
-                else
-                    fm_show();
-            } else if (t->app_type == TASK_APP_SECURITY) {
-                if (security_gui_open())
-                    security_gui_hide();
-                else
-                    security_gui_show();
-            }
-        }
-    }
     return 1;
 }
 
@@ -430,6 +557,14 @@ void dock_motion(XMotionEvent *ev)
     found = dock_hit(ev->x);
     if (found != hover_dock) {
         hover_dock = found;
+        dock_update();
+    }
+}
+
+void dock_leave(void)
+{
+    if (hover_dock != -1) {
+        hover_dock = -1;
         dock_update();
     }
 }

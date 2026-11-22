@@ -1,14 +1,14 @@
 /*
- * SCDE - desktop shortcuts (icons drawn on the root window)
+ * XENUS - desktop shortcuts (icons drawn on the root window)
  *
  * Single click selects, double click opens, right click shows a context
  * menu, dragging rearranges the icon (positions are kept in
- * ~/.local/share/scde/desktop.layout).  The icons live in ~/Desktop and
+ * ~/.local/share/xenus/desktop.layout).  The icons live in ~/Desktop and
  * a *.desktop entry is opened through its Exec= line.  Drawing on the
  * root window keeps them below every client without extra X windows.
  */
 #define _XOPEN_SOURCE 700
-#include "scde.h"
+#include "xenus.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -774,7 +774,7 @@ static void desk_set_wallpaper(void)
     if (config_set_wallpaper(icons[sel].path) != 0) {
         msgbox_show("Wallpaper not saved",
                     "Could not write wallpaper= into\n"
-                    "~/.config/scde/config");
+                    "~/.config/xenus/config");
         return;
     }
     wallpaper_apply();
@@ -896,7 +896,7 @@ static void desk_icon_menu(XButtonEvent *ev, int i)
 
 static void desk_drag(int idx, XButtonEvent *ev)
 {
-    XEvent e, last, pending;
+    XEvent e, pending;
     int ox = icons[idx].x, oy = icons[idx].y;
     int dx0 = ev->x_root - ox, dy0 = ev->y_root - oy;
     int moved = 0, has_pending = 0;
@@ -907,15 +907,12 @@ static void desk_drag(int idx, XButtonEvent *ev)
                      ev->time) != GrabSuccess)
         return;
     desk_busy = 1;
-    memset(&last, 0, sizeof(last));
 
     for (;;) {
-        XNextEvent(sc.dpy, &e);
+        event_next_coalesced(&e);
         if (e.type == MotionNotify) {
             int nx, ny;
 
-            while (XCheckMaskEvent(sc.dpy, PointerMotionMask, &last))
-                e = last;
             nx = e.xmotion.x_root - dx0;
             ny = e.xmotion.y_root - dy0;
             if (nx < DESK_PAD)
@@ -972,7 +969,6 @@ static void desk_drag(int idx, XButtonEvent *ev)
         log_msg("desktop: moved '%s' to %d,%d", icons[idx].name,
                 icons[idx].x, icons[idx].y);
     }
-    XFlush(sc.dpy);
 
     if (has_pending)
         handle_button_press(&pending.xbutton);   /* the click we swallowed */
@@ -1067,11 +1063,11 @@ void desktop_init(void)
         home = "/tmp";
     snprintf(desk_dir, sizeof(desk_dir), "%s/Desktop", home);
     if (data && *data)
-        snprintf(layout_path, sizeof(layout_path), "%s/scde/desktop.layout",
+        snprintf(layout_path, sizeof(layout_path), "%s/xenus/desktop.layout",
                  data);
     else
         snprintf(layout_path, sizeof(layout_path),
-                 "%s/.local/share/scde/desktop.layout", home);
+                 "%s/.local/share/xenus/desktop.layout", home);
 
     desk_scan();
     desktop_paint();

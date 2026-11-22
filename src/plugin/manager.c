@@ -1,11 +1,11 @@
 #define _XOPEN_SOURCE 700
 /*
- * SCDE plugin manager - discover -> load -> validate -> init -> running ->
+ * XENUS plugin manager - discover -> load -> validate -> init -> running ->
  * shutdown -> unload, with failures isolated to the plugin that caused them.
  */
-#include <scde/event.h>
-#include <scde/plugin.h>
-#include <scde/security.h>
+#include <xenus/event.h>
+#include <xenus/plugin.h>
+#include <xenus/security.h>
 
 #include "loader.h"
 
@@ -44,10 +44,10 @@ static void plugin_subject(const char *name, char *out, size_t out_len)
 
 typedef struct {
     int in_use;
-    int state;                        /* scde_plugin_state_t */
+    int state;                        /* xenus_plugin_state_t */
     char path[PATH_LEN];
     char error[192];
-    scde_loaded_plugin_t loaded;
+    xenus_loaded_plugin_t loaded;
 } plugin_entry_t;
 
 static plugin_entry_t table[MAX_PLUGINS];
@@ -59,8 +59,8 @@ static void drop_caps(plugin_entry_t *e)
     if (!e->loaded.name[0])
         return;
     plugin_subject(e->loaded.name, subject, sizeof(subject));
-    if (scde_security_revoke(subject, 0xffffffffu) == SCDE_OK)
-        scde_audit_log(SCDE_AUDIT_CAPABILITY_DENIED, subject, 0,
+    if (xenus_security_revoke(subject, 0xffffffffu) == XENUS_OK)
+        xenus_audit_log(XENUS_AUDIT_CAPABILITY_DENIED, subject, 0,
                        "capabilities revoked on unload");
 }
 static int mgr_initialized;
@@ -71,30 +71,30 @@ static char found_files[MAX_PLUGINS][PATH_LEN];
 
 static void post_plugin_event(int type, int index, const char *text)
 {
-    scde_event_t ev;
+    xenus_event_t ev;
 
     memset(&ev, 0, sizeof(ev));
     ev.type = type;
     ev.id = (uint64_t)(unsigned)index;
     snprintf(ev.text, sizeof(ev.text), "%.*s", (int)(sizeof(ev.text) - 1),
              text ? text : "");
-    scde_event_post(&ev);
+    xenus_event_post(&ev);
 }
 
 /* ------------------------------------------------------------ lifecycle -- */
 
-int scde_plugins_init(const char *path)
+int xenus_plugins_init(const char *path)
 {
     const char *env;
 
     if (mgr_initialized)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
 
     search_path[0] = '\0';
     if (path && *path) {
         snprintf(search_path, sizeof(search_path), "%s", path);
     } else {
-        env = getenv("SCDE_PLUGIN_PATH");
+        env = getenv("XENUS_PLUGIN_PATH");
         if (env && *env) {
             snprintf(search_path, sizeof(search_path), "%s", env);
         } else {
@@ -103,57 +103,57 @@ int scde_plugins_init(const char *path)
             default_path_buf[0] = '\0';
             if (home && *home)
                 snprintf(default_path_buf, sizeof(default_path_buf),
-                         "%s/.local/share/scde/plugins:"
-                         "/usr/local/lib/scde/plugins:"
-                         "/usr/lib/scde/plugins", home);
+                         "%s/.local/share/xenus/plugins:"
+                         "/usr/local/lib/xenus/plugins:"
+                         "/usr/lib/xenus/plugins", home);
             else
                 snprintf(default_path_buf, sizeof(default_path_buf),
-                         "/usr/local/lib/scde/plugins:"
-                         "/usr/lib/scde/plugins");
+                         "/usr/local/lib/xenus/plugins:"
+                         "/usr/lib/xenus/plugins");
             snprintf(search_path, sizeof(search_path), "%s", default_path_buf);
         }
     }
 
     memset(table, 0, sizeof(table));
     mgr_initialized = 1;
-    scde_logf(SCDE_LOG_DEBUG, "plugins: search path %s", search_path);
-    return SCDE_OK;
+    xenus_logf(XENUS_LOG_DEBUG, "plugins: search path %s", search_path);
+    return XENUS_OK;
 }
 
-int scde_plugins_unload_all(void)
+int xenus_plugins_unload_all(void)
 {
     int i, n = 0;
 
     if (!mgr_initialized)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     for (i = 0; i < MAX_PLUGINS; i++) {
         if (!table[i].in_use)
             continue;
-        if (table[i].state == SCDE_PLUGIN_RUNNING ||
-            table[i].state == SCDE_PLUGIN_LOADED) {
+        if (table[i].state == XENUS_PLUGIN_RUNNING ||
+            table[i].state == XENUS_PLUGIN_LOADED) {
             drop_caps(&table[i]);
-            if (table[i].state == SCDE_PLUGIN_RUNNING)
-                scde_loader_stop(&table[i].loaded);
+            if (table[i].state == XENUS_PLUGIN_RUNNING)
+                xenus_loader_stop(&table[i].loaded);
             else
-                scde_loader_close(&table[i].loaded);
-            table[i].state = SCDE_PLUGIN_UNLOADED;
+                xenus_loader_close(&table[i].loaded);
+            table[i].state = XENUS_PLUGIN_UNLOADED;
             n++;
         }
     }
     if (n > 0)
-        scde_logf(SCDE_LOG_INFO, "plugins: unloaded %d", n);
-    return SCDE_OK;
+        xenus_logf(XENUS_LOG_INFO, "plugins: unloaded %d", n);
+    return XENUS_OK;
 }
 
-void scde_plugins_shutdown(void)
+void xenus_plugins_shutdown(void)
 {
     if (!mgr_initialized)
         return;
-    scde_plugins_unload_all();
+    xenus_plugins_unload_all();
     memset(table, 0, sizeof(table));
     search_path[0] = '\0';
     mgr_initialized = 0;
-    scde_log(SCDE_LOG_DEBUG, "plugins: manager shut down");
+    xenus_log(XENUS_LOG_DEBUG, "plugins: manager shut down");
 }
 
 /* ------------------------------------------------------------ discovery -- */
@@ -174,20 +174,20 @@ static int path_is_listed(const char *path, int n)
     return 0;
 }
 
-int scde_plugins_discover(void)
+int xenus_plugins_discover(void)
 {
     const char *p;
     int n = 0;
     int i;
 
     if (!mgr_initialized)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
 
     for (i = 0; i < MAX_PLUGINS; i++) {
         if (table[i].in_use &&
-            (table[i].state == SCDE_PLUGIN_LOADED ||
-             table[i].state == SCDE_PLUGIN_RUNNING))
-            return SCDE_ERR_STATE;         /* never drop a live plugin */
+            (table[i].state == XENUS_PLUGIN_LOADED ||
+             table[i].state == XENUS_PLUGIN_RUNNING))
+            return XENUS_ERR_STATE;         /* never drop a live plugin */
     }
 
     memset(found_files, 0, sizeof(found_files));
@@ -237,13 +237,13 @@ int scde_plugins_discover(void)
     memset(table, 0, sizeof(table));
     for (i = 0; i < n; i++) {
         table[i].in_use = 1;
-        table[i].state = SCDE_PLUGIN_DISCOVERED;
+        table[i].state = XENUS_PLUGIN_DISCOVERED;
         snprintf(table[i].path, PATH_LEN, "%.*s", PATH_LEN - 1,
                  found_files[i]);
         table[i].error[0] = '\0';
     }
-    scde_logf(SCDE_LOG_INFO, "plugins: discovered %d", n);
-    return SCDE_OK;
+    xenus_logf(XENUS_LOG_INFO, "plugins: discovered %d", n);
+    return XENUS_OK;
 }
 
 /* ---------------------------------------------------------------- load -- */
@@ -269,17 +269,17 @@ static int find_path(const char *path, int *free_slot)
 static void fail_entry(plugin_entry_t *e, int index, int status,
                        const char *err, const char *fallback)
 {
-    e->state = SCDE_PLUGIN_FAILED;
+    e->state = XENUS_PLUGIN_FAILED;
     snprintf(e->error, sizeof(e->error), "%s",
              (err && *err) ? err : fallback);
-    scde_logf(SCDE_LOG_ERROR, "plugins: %s: %s",
+    xenus_logf(XENUS_LOG_ERROR, "plugins: %s: %s",
               e->loaded.name[0] ? e->loaded.name : e->path, e->error);
-    post_plugin_event(SCDE_EVENT_PLUGIN_FAILED, index,
+    post_plugin_event(XENUS_EVENT_PLUGIN_FAILED, index,
                       e->loaded.name[0] ? e->loaded.name : e->path);
     (void)status;
 }
 
-int scde_plugins_load(const char *path)
+int xenus_plugins_load(const char *path)
 {
     char err[192];
     char subject[80];
@@ -290,36 +290,36 @@ int scde_plugins_load(const char *path)
     const char *gpath;
 
     if (!mgr_initialized)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     if (!path || !*path)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     if (access(path, R_OK) != 0)
-        return SCDE_ERR_NOT_FOUND;
+        return XENUS_ERR_NOT_FOUND;
 
     gpath = realpath(path, real) != NULL ? real : path;
     idx = find_path(path, &slot);
     if (idx < 0) {
         idx = slot;
         if (idx < 0)
-            return SCDE_ERR_FULL;
+            return XENUS_ERR_FULL;
         table[idx].in_use = 1;
-        table[idx].state = SCDE_PLUGIN_DISCOVERED;
+        table[idx].state = XENUS_PLUGIN_DISCOVERED;
         snprintf(table[idx].path, PATH_LEN, "%.*s", PATH_LEN - 1, path);
         table[idx].error[0] = '\0';
     }
     e = &table[idx];
-    if (e->state == SCDE_PLUGIN_LOADED || e->state == SCDE_PLUGIN_RUNNING)
-        return SCDE_ERR_STATE;
+    if (e->state == XENUS_PLUGIN_LOADED || e->state == XENUS_PLUGIN_RUNNING)
+        return XENUS_ERR_STATE;
 
     { /* security gate: path safety, scan, trust, policy */
-        scde_scan_result_t sres;
+        xenus_scan_result_t sres;
         char msg[192];
 
-        if (scde_security_check_plugin(gpath, &sres) != SCDE_OK) {
+        if (xenus_security_check_plugin(gpath, &sres) != XENUS_OK) {
             snprintf(msg, sizeof(msg), "security: %s",
                      sres.detail[0] ? sres.detail : "plugin rejected");
-            fail_entry(e, idx, SCDE_ERR, msg, "rejected by security");
-            return SCDE_ERR;
+            fail_entry(e, idx, XENUS_ERR, msg, "rejected by security");
+            return XENUS_ERR;
         }
     }
 
@@ -327,13 +327,13 @@ int scde_plugins_load(const char *path)
     /* open the resolved path the gate actually validated, not the
        (possibly symlinked) caller-supplied path: otherwise the link could
        be swapped between the security check and dlopen */
-    st = scde_loader_open(gpath, &e->loaded, err, sizeof(err));
-    if (st != SCDE_OK) {
+    st = xenus_loader_open(gpath, &e->loaded, err, sizeof(err));
+    if (st != XENUS_OK) {
         fail_entry(e, idx, st, err, "invalid plugin");
         return st;
     }
 
-    e->state = SCDE_PLUGIN_LOADED;
+    e->state = XENUS_PLUGIN_LOADED;
     e->error[0] = '\0';
 
     /*
@@ -343,13 +343,13 @@ int scde_plugins_load(const char *path)
      * NOTHING.  Loading never grants spawn/net/write/device/plugin.load.
      */
     plugin_subject(e->loaded.name, subject, sizeof(subject));
-    trust = scde_trust_get(gpath);
-    if (trust == SCDE_TRUST_TRUSTED) {
-        if (scde_security_grant(subject, SCDE_CAP_PLUGIN_DEFAULT) == SCDE_OK)
-            scde_audit_log(SCDE_AUDIT_CAPABILITY_GRANTED, subject, 0,
+    trust = xenus_trust_get(gpath);
+    if (trust == XENUS_TRUST_TRUSTED) {
+        if (xenus_security_grant(subject, XENUS_CAP_PLUGIN_DEFAULT) == XENUS_OK)
+            xenus_audit_log(XENUS_AUDIT_CAPABILITY_GRANTED, subject, 0,
                            "plugin defaults");
     } else {
-        scde_audit_log(SCDE_AUDIT_CAPABILITY_DENIED, subject, 0,
+        xenus_audit_log(XENUS_AUDIT_CAPABILITY_DENIED, subject, 0,
                        "untrusted plugin: no capabilities");
     }
 
@@ -357,73 +357,73 @@ int scde_plugins_load(const char *path)
      * the trust gate above already made this TRUSTED-ONLY (or the admin
      * took explicit responsibility via policy) */
 
-    st = scde_loader_start(&e->loaded, err, sizeof(err));
-    if (st != SCDE_OK) {
+    st = xenus_loader_start(&e->loaded, err, sizeof(err));
+    if (st != XENUS_OK) {
         /* never call shutdown() on a plugin that failed to start */
-        scde_loader_close(&e->loaded);
-        scde_security_revoke(subject, 0xffffffffu);  /* no caps leak */
+        xenus_loader_close(&e->loaded);
+        xenus_security_revoke(subject, 0xffffffffu);  /* no caps leak */
         fail_entry(e, idx, st, err, "init failed");
         return st;
     }
 
-    e->state = SCDE_PLUGIN_RUNNING;
-    scde_logf(SCDE_LOG_INFO, "plugins: %s %s running", e->loaded.name,
+    e->state = XENUS_PLUGIN_RUNNING;
+    xenus_logf(XENUS_LOG_INFO, "plugins: %s %s running", e->loaded.name,
               e->loaded.version);
-    post_plugin_event(SCDE_EVENT_PLUGIN_LOADED, idx, e->loaded.name);
-    return SCDE_OK;
+    post_plugin_event(XENUS_EVENT_PLUGIN_LOADED, idx, e->loaded.name);
+    return XENUS_OK;
 }
 
-int scde_plugins_load_all(void)
+int xenus_plugins_load_all(void)
 {
     int i, ok = 0, bad = 0;
 
     if (!mgr_initialized)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     for (i = 0; i < MAX_PLUGINS; i++) {
-        if (!table[i].in_use || table[i].state != SCDE_PLUGIN_DISCOVERED)
+        if (!table[i].in_use || table[i].state != XENUS_PLUGIN_DISCOVERED)
             continue;
-        if (scde_plugins_load(table[i].path) == SCDE_OK)
+        if (xenus_plugins_load(table[i].path) == XENUS_OK)
             ok++;
         else
             bad++;
     }
-    scde_logf(SCDE_LOG_INFO, "plugins: %d started, %d failed", ok, bad);
-    return SCDE_OK;
+    xenus_logf(XENUS_LOG_INFO, "plugins: %d started, %d failed", ok, bad);
+    return XENUS_OK;
 }
 
-int scde_plugins_unload(const char *name)
+int xenus_plugins_unload(const char *name)
 {
     int i;
 
     if (!mgr_initialized)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     if (!name || !*name)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     for (i = 0; i < MAX_PLUGINS; i++) {
         if (!table[i].in_use || !table[i].loaded.name[0])
             continue;
         if (strcmp(table[i].loaded.name, name) != 0)
             continue;
-        if (table[i].state == SCDE_PLUGIN_RUNNING ||
-            table[i].state == SCDE_PLUGIN_LOADED) {
+        if (table[i].state == XENUS_PLUGIN_RUNNING ||
+            table[i].state == XENUS_PLUGIN_LOADED) {
             drop_caps(&table[i]);
-            if (table[i].state == SCDE_PLUGIN_RUNNING) {
-                scde_loader_stop(&table[i].loaded);
-                scde_logf(SCDE_LOG_INFO, "plugins: %s unloaded", name);
+            if (table[i].state == XENUS_PLUGIN_RUNNING) {
+                xenus_loader_stop(&table[i].loaded);
+                xenus_logf(XENUS_LOG_INFO, "plugins: %s unloaded", name);
             } else {
-                scde_loader_close(&table[i].loaded);
+                xenus_loader_close(&table[i].loaded);
             }
-            table[i].state = SCDE_PLUGIN_UNLOADED;
-            return SCDE_OK;
+            table[i].state = XENUS_PLUGIN_UNLOADED;
+            return XENUS_OK;
         }
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     }
-    return SCDE_ERR_NOT_FOUND;
+    return XENUS_ERR_NOT_FOUND;
 }
 
 /* ------------------------------------------------------------- inspect -- */
 
-int scde_plugins_count(void)
+int xenus_plugins_count(void)
 {
     int i, n = 0;
 
@@ -434,18 +434,18 @@ int scde_plugins_count(void)
     return n;
 }
 
-int scde_plugins_running(void)
+int xenus_plugins_running(void)
 {
     int i, n = 0;
 
     for (i = 0; i < MAX_PLUGINS; i++) {
-        if (table[i].in_use && table[i].state == SCDE_PLUGIN_RUNNING)
+        if (table[i].in_use && table[i].state == XENUS_PLUGIN_RUNNING)
             n++;
     }
     return n;
 }
 
-const scde_plugin_info_t *scde_plugins_info(int index)
+const xenus_plugin_info_t *xenus_plugins_info(int index)
 {
     if (index < 0 || index >= MAX_PLUGINS || !table[index].in_use)
         return NULL;
@@ -454,44 +454,44 @@ const scde_plugin_info_t *scde_plugins_info(int index)
     return &table[index].loaded.view;
 }
 
-int scde_plugins_state(int index)
+int xenus_plugins_state(int index)
 {
     if (index < 0 || index >= MAX_PLUGINS || !table[index].in_use)
         return 0;
     return table[index].state;
 }
 
-const char *scde_plugins_error(int index)
+const char *xenus_plugins_error(int index)
 {
     if (index < 0 || index >= MAX_PLUGINS || !table[index].in_use)
         return "";
     return table[index].error;
 }
 
-const char *scde_plugins_file(int index)
+const char *xenus_plugins_file(int index)
 {
     if (index < 0 || index >= MAX_PLUGINS || !table[index].in_use)
         return "";
     return table[index].path;
 }
 
-const char *scde_plugins_search_path(void)
+const char *xenus_plugins_search_path(void)
 {
     return search_path;
 }
 
-const char *scde_plugin_state_name(int state)
+const char *xenus_plugin_state_name(int state)
 {
     switch (state) {
-    case SCDE_PLUGIN_DISCOVERED:
+    case XENUS_PLUGIN_DISCOVERED:
         return "discovered";
-    case SCDE_PLUGIN_LOADED:
+    case XENUS_PLUGIN_LOADED:
         return "loaded";
-    case SCDE_PLUGIN_RUNNING:
+    case XENUS_PLUGIN_RUNNING:
         return "running";
-    case SCDE_PLUGIN_FAILED:
+    case XENUS_PLUGIN_FAILED:
         return "failed";
-    case SCDE_PLUGIN_UNLOADED:
+    case XENUS_PLUGIN_UNLOADED:
         return "unloaded";
     default:
         return "unknown";

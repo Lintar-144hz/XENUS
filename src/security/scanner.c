@@ -1,5 +1,5 @@
 /*
- * SCDE Security Layer - built-in malware scanner.
+ * XENUS Security Layer - built-in malware scanner.
  *
  * Pipeline (never executes the analysed file):
  *
@@ -19,9 +19,10 @@
  * MALICIOUS - several independent indicators are required.
  */
 #define _DEFAULT_SOURCE
-#include <scde/security.h>
+#include <xenus/security.h>
 
 #include "security_internal.h"
+#include "../cache.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -189,7 +190,7 @@ static void sha256_final(sha256_ctx *c, char out_hex[65])
 
 typedef struct {
     int weight;
-    int reason;                     /* scde_reason_t */
+    int reason;                     /* xenus_reason_t */
     int group;
     char sub[SUB_LEN];
 } rule_t;
@@ -201,13 +202,13 @@ typedef struct {
 
 typedef struct {
     int used;
-    char path[SCDE_PATH_MAX];
+    char path[XENUS_PATH_MAX];
     off_t size;
     int64_t mtime;
-    scde_scan_result_t res;
+    xenus_scan_result_t res;
 } cache_entry_t;
 
-static int scan_mode = SCDE_SCAN_PASSIVE;
+static int scan_mode = XENUS_SCAN_PASSIVE;
 static int scanner_ready;
 
 static rule_t db_rules[MAX_RULES];
@@ -217,14 +218,14 @@ static int n_bad_hashes;
 static hash_entry_t trust_hashes[MAX_HASHES];
 static int n_trust_hashes;
 
-static cache_entry_t cache[SCDE_SCAN_RING];
+static cache_entry_t cache[XENUS_SCAN_RING];
 static int cache_next;
 
 /* watch */
 static int ifd = -1;
 static int n_watch;
-static char watch_dirs[SCDE_WATCH_MAX][192];
-static int watch_wd[SCDE_WATCH_MAX];
+static char watch_dirs[XENUS_WATCH_MAX][192];
+static int watch_wd[XENUS_WATCH_MAX];
 
 /* groups: separate heuristic buckets so several independent indicators are
    needed before MALICIOUS is possible */
@@ -266,9 +267,9 @@ static int fold_risk(const acc_t *a, int *best_reason)
     int total = a->sig_risk;
     int best_w = 0;
 
-    *best_reason = SCDE_REASON_NONE;
+    *best_reason = XENUS_REASON_NONE;
     if (a->sig_risk > 0) {
-        *best_reason = a->sig_reason ? a->sig_reason : SCDE_REASON_SIGNATURE;
+        *best_reason = a->sig_reason ? a->sig_reason : XENUS_REASON_SIGNATURE;
         best_w = a->sig_risk;
     }
     for (g = 0; g < G_COUNT; g++) {
@@ -309,46 +310,46 @@ static const struct {
     int group;
 } builtin_rules[] = {
     /* destructive */
-    { "rm -rf /", 45, SCDE_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
-    { "rm -fr /", 45, SCDE_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
-    { "mkfs", 40, SCDE_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
-    { "dd of=/dev/", 40, SCDE_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
-    { ":(){:|:&};:", 50, SCDE_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
-    { "shred -", 35, SCDE_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
-    { "wipefs", 35, SCDE_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
+    { "rm -rf /", 45, XENUS_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
+    { "rm -fr /", 45, XENUS_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
+    { "mkfs", 40, XENUS_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
+    { "dd of=/dev/", 40, XENUS_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
+    { ":(){:|:&};:", 50, XENUS_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
+    { "shred -", 35, XENUS_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
+    { "wipefs", 35, XENUS_REASON_SCRIPT_DESTRUCTIVE, G_DSTRUCT },
     /* privilege escalation */
-    { "chmod u+s", 40, SCDE_REASON_SCRIPT_PRIV, G_PRIV },
-    { "chmod +s", 40, SCDE_REASON_SCRIPT_PRIV, G_PRIV },
-    { "chown root", 35, SCDE_REASON_SCRIPT_PRIV, G_PRIV },
-    { "/etc/sudoers", 40, SCDE_REASON_SCRIPT_PRIV, G_PRIV },
-    { ">> /etc/passwd", 45, SCDE_REASON_SCRIPT_PRIV, G_PRIV },
-    { "setcap cap_", 40, SCDE_REASON_SCRIPT_PRIV, G_PRIV },
-    { "pkexec", 35, SCDE_REASON_SCRIPT_PRIV, G_PRIV },
+    { "chmod u+s", 40, XENUS_REASON_SCRIPT_PRIV, G_PRIV },
+    { "chmod +s", 40, XENUS_REASON_SCRIPT_PRIV, G_PRIV },
+    { "chown root", 35, XENUS_REASON_SCRIPT_PRIV, G_PRIV },
+    { "/etc/sudoers", 40, XENUS_REASON_SCRIPT_PRIV, G_PRIV },
+    { ">> /etc/passwd", 45, XENUS_REASON_SCRIPT_PRIV, G_PRIV },
+    { "setcap cap_", 40, XENUS_REASON_SCRIPT_PRIV, G_PRIV },
+    { "pkexec", 35, XENUS_REASON_SCRIPT_PRIV, G_PRIV },
     /* credential harvesting */
-    { "/etc/shadow", 45, SCDE_REASON_SCRIPT_CRED, G_CRED },
-    { "id_rsa", 45, SCDE_REASON_SCRIPT_CRED, G_CRED },
-    { "id_ed25519", 45, SCDE_REASON_SCRIPT_CRED, G_CRED },
-    { ".aws/credentials", 45, SCDE_REASON_SCRIPT_CRED, G_CRED },
-    { "history >", 35, SCDE_REASON_SCRIPT_CRED, G_CRED },
+    { "/etc/shadow", 45, XENUS_REASON_SCRIPT_CRED, G_CRED },
+    { "id_rsa", 45, XENUS_REASON_SCRIPT_CRED, G_CRED },
+    { "id_ed25519", 45, XENUS_REASON_SCRIPT_CRED, G_CRED },
+    { ".aws/credentials", 45, XENUS_REASON_SCRIPT_CRED, G_CRED },
+    { "history >", 35, XENUS_REASON_SCRIPT_CRED, G_CRED },
     /* persistence */
-    { "crontab -", 35, SCDE_REASON_SCRIPT_PERSIST, G_PERSIST },
-    { "@reboot", 35, SCDE_REASON_SCRIPT_PERSIST, G_PERSIST },
-    { "systemctl enable", 35, SCDE_REASON_SCRIPT_PERSIST, G_PERSIST },
-    { ".config/autostart", 35, SCDE_REASON_SCRIPT_PERSIST, G_PERSIST },
-    { ".bashrc", 25, SCDE_REASON_SCRIPT_PERSIST, G_PERSIST },
+    { "crontab -", 35, XENUS_REASON_SCRIPT_PERSIST, G_PERSIST },
+    { "@reboot", 35, XENUS_REASON_SCRIPT_PERSIST, G_PERSIST },
+    { "systemctl enable", 35, XENUS_REASON_SCRIPT_PERSIST, G_PERSIST },
+    { ".config/autostart", 35, XENUS_REASON_SCRIPT_PERSIST, G_PERSIST },
+    { ".bashrc", 25, XENUS_REASON_SCRIPT_PERSIST, G_PERSIST },
     /* remote execution / download-and-execute */
-    { "bash -i >& /dev/tcp", 50, SCDE_REASON_SCRIPT_REMOTE, G_REMOTE },
-    { "/dev/tcp/", 45, SCDE_REASON_SCRIPT_REMOTE, G_REMOTE },
-    { "nc -e", 45, SCDE_REASON_SCRIPT_REMOTE, G_REMOTE },
-    { "curl -fsSL", 40, SCDE_REASON_SCRIPT_REMOTE, G_REMOTE },
-    { "wget -qO-", 40, SCDE_REASON_SCRIPT_REMOTE, G_REMOTE },
-    { "| sh", 35, SCDE_REASON_SCRIPT_REMOTE, G_REMOTE },
-    { "| bash", 35, SCDE_REASON_SCRIPT_REMOTE, G_REMOTE },
+    { "bash -i >& /dev/tcp", 50, XENUS_REASON_SCRIPT_REMOTE, G_REMOTE },
+    { "/dev/tcp/", 45, XENUS_REASON_SCRIPT_REMOTE, G_REMOTE },
+    { "nc -e", 45, XENUS_REASON_SCRIPT_REMOTE, G_REMOTE },
+    { "curl -fsSL", 40, XENUS_REASON_SCRIPT_REMOTE, G_REMOTE },
+    { "wget -qO-", 40, XENUS_REASON_SCRIPT_REMOTE, G_REMOTE },
+    { "| sh", 35, XENUS_REASON_SCRIPT_REMOTE, G_REMOTE },
+    { "| bash", 35, XENUS_REASON_SCRIPT_REMOTE, G_REMOTE },
     /* obfuscated payload */
-    { "base64 -d", 35, SCDE_REASON_SCRIPT_OBFUSC, G_OBFUSC },
-    { "base64 --decode", 35, SCDE_REASON_SCRIPT_OBFUSC, G_OBFUSC },
-    { "openssl enc -d", 35, SCDE_REASON_SCRIPT_OBFUSC, G_OBFUSC },
-    { "eval ", 30, SCDE_REASON_SCRIPT_OBFUSC, G_OBFUSC }
+    { "base64 -d", 35, XENUS_REASON_SCRIPT_OBFUSC, G_OBFUSC },
+    { "base64 --decode", 35, XENUS_REASON_SCRIPT_OBFUSC, G_OBFUSC },
+    { "openssl enc -d", 35, XENUS_REASON_SCRIPT_OBFUSC, G_OBFUSC },
+    { "eval ", 30, XENUS_REASON_SCRIPT_OBFUSC, G_OBFUSC }
 };
 
 static int contains_ci(const char *hay, size_t hay_len, const char *needle)
@@ -382,18 +383,18 @@ static int contains_ci(const char *hay, size_t hay_len, const char *needle)
 static int reason_group(int reason, int *group)
 {
     switch (reason) {
-    case SCDE_REASON_PATH: *group = G_PATH; return 1;
-    case SCDE_REASON_PERM: *group = G_PERM; return 1;
-    case SCDE_REASON_NAME: *group = G_NAME; return 1;
-    case SCDE_REASON_TYPE: *group = G_TYPE; return 1;
-    case SCDE_REASON_ELF: *group = G_ELF; return 1;
-    case SCDE_REASON_SCRIPT_DESTRUCTIVE: *group = G_DSTRUCT; return 1;
-    case SCDE_REASON_SCRIPT_PRIV: *group = G_PRIV; return 1;
-    case SCDE_REASON_SCRIPT_CRED: *group = G_CRED; return 1;
-    case SCDE_REASON_SCRIPT_PERSIST: *group = G_PERSIST; return 1;
-    case SCDE_REASON_SCRIPT_REMOTE: *group = G_REMOTE; return 1;
-    case SCDE_REASON_SCRIPT_OBFUSC: *group = G_OBFUSC; return 1;
-    case SCDE_REASON_SYMLINK: *group = G_SYMLINK; return 1;
+    case XENUS_REASON_PATH: *group = G_PATH; return 1;
+    case XENUS_REASON_PERM: *group = G_PERM; return 1;
+    case XENUS_REASON_NAME: *group = G_NAME; return 1;
+    case XENUS_REASON_TYPE: *group = G_TYPE; return 1;
+    case XENUS_REASON_ELF: *group = G_ELF; return 1;
+    case XENUS_REASON_SCRIPT_DESTRUCTIVE: *group = G_DSTRUCT; return 1;
+    case XENUS_REASON_SCRIPT_PRIV: *group = G_PRIV; return 1;
+    case XENUS_REASON_SCRIPT_CRED: *group = G_CRED; return 1;
+    case XENUS_REASON_SCRIPT_PERSIST: *group = G_PERSIST; return 1;
+    case XENUS_REASON_SCRIPT_REMOTE: *group = G_REMOTE; return 1;
+    case XENUS_REASON_SCRIPT_OBFUSC: *group = G_OBFUSC; return 1;
+    case XENUS_REASON_SYMLINK: *group = G_SYMLINK; return 1;
     default: *group = -1; return 0;
     }
 }
@@ -610,32 +611,32 @@ static void elf_scan(int fd, off_t size, const unsigned char *hdr, acc_t *a,
     uint64_t interp_off = 0, interp_len = 0;
 
     if (size < 64) {
-        acc_add(a, G_ELF, 55, SCDE_REASON_ELF);
+        acc_add(a, G_ELF, 55, XENUS_REASON_ELF);
         return;
     }
     is64 = hdr[4] == 2;
     big = hdr[5] == 2;
     if (hdr[4] != 1 && hdr[4] != 2) {
-        acc_add(a, G_ELF, 40, SCDE_REASON_ELF);
+        acc_add(a, G_ELF, 40, XENUS_REASON_ELF);
         return;
     }
     if (hdr[5] != 1 && hdr[5] != 2) {
-        acc_add(a, G_ELF, 40, SCDE_REASON_ELF);
+        acc_add(a, G_ELF, 40, XENUS_REASON_ELF);
         return;
     }
     machine = rd16(hdr + 18, big);
     if (HOST_EM != 0 && machine != (uint16_t)HOST_EM)
-        acc_add(a, G_ELF, 20, SCDE_REASON_ELF);
+        acc_add(a, G_ELF, 20, XENUS_REASON_ELF);
 
     {
         uint32_t etype = rd16(hdr + 16, big);
 
         if (etype == 1)
-            acc_add(a, G_ELF, 30, SCDE_REASON_ELF);      /* relocatable */
+            acc_add(a, G_ELF, 30, XENUS_REASON_ELF);      /* relocatable */
         else if (etype != 2 && etype != 3)
-            acc_add(a, G_ELF, 40, SCDE_REASON_ELF);      /* not executable */
+            acc_add(a, G_ELF, 40, XENUS_REASON_ELF);      /* not executable */
         else if (etype == 2 && !exec_bit)
-            acc_add(a, G_PERM, 15, SCDE_REASON_PERM);    /* no exec bit */
+            acc_add(a, G_PERM, 15, XENUS_REASON_PERM);    /* no exec bit */
     }
 
     phoff = is64 ? rd64(hdr + 32, big) : (uint64_t)rd32(hdr + 28, big);
@@ -644,7 +645,7 @@ static void elf_scan(int fd, off_t size, const unsigned char *hdr, acc_t *a,
 
     if (phent < (is64 ? 56u : 32u) || phnum > 96 ||
         phoff + (uint64_t)phnum * phent > (uint64_t)size) {
-        acc_add(a, G_ELF, 35, SCDE_REASON_ELF);
+        acc_add(a, G_ELF, 35, XENUS_REASON_ELF);
         return;
     }
     if (phnum == 0)
@@ -658,7 +659,7 @@ static void elf_scan(int fd, off_t size, const unsigned char *hdr, acc_t *a,
             phnum = 0;
     }
     if (phnum == 0 || !read_at(fd, (off_t)phoff, ph, (size_t)phnum * phent)) {
-        acc_add(a, G_ELF, 35, SCDE_REASON_ELF);
+        acc_add(a, G_ELF, 35, XENUS_REASON_ELF);
         return;
     }
 
@@ -722,10 +723,10 @@ static void elf_scan(int fd, off_t size, const unsigned char *hdr, acc_t *a,
                 strncmp(interp, "/var/tmp/", 9) == 0 ||
                 strncmp(interp, "/dev/shm/", 9) == 0 ||
                 strstr(interp, "..") != NULL) {
-                acc_add(a, G_ELF, 35, SCDE_REASON_ELF);
+                acc_add(a, G_ELF, 35, XENUS_REASON_ELF);
             } else if (strncmp(interp, "/lib", 4) != 0 &&
                        strncmp(interp, "/usr/lib", 8) != 0) {
-                acc_add(a, G_ELF, 25, SCDE_REASON_ELF);
+                acc_add(a, G_ELF, 25, XENUS_REASON_ELF);
             }
         }
     }
@@ -803,7 +804,7 @@ static void elf_scan(int fd, off_t size, const unsigned char *hdr, acc_t *a,
                             sizeof(soname) - 1)) {
                     soname[sizeof(soname) - 1] = '\0';
                     if (strchr(soname, '/')) {
-                        acc_add(a, G_ELF, 25, SCDE_REASON_ELF);
+                        acc_add(a, G_ELF, 25, XENUS_REASON_ELF);
                         break;
                     }
                 }
@@ -887,48 +888,78 @@ static const hash_entry_t *find_hash(const hash_entry_t *tab, int count,
 /* -------------------------------------------------------------- cache -- */
 
 static int cache_lookup(const char *path, const struct stat *st,
-                        scde_scan_result_t *out)
+                        xenus_scan_result_t *out)
 {
     int i;
 
-    for (i = 0; i < SCDE_SCAN_RING; i++) {
+    for (i = 0; i < XENUS_SCAN_RING; i++) {
         if (!cache[i].used)
             continue;
         if (strcmp(cache[i].path, path) == 0 && cache[i].size == st->st_size &&
             cache[i].mtime == (int64_t)st->st_mtime) {
             *out = cache[i].res;
-            out->flags |= SCDE_SCANFLAG_CACHED;
+            out->flags |= XENUS_SCANFLAG_CACHED;
             return 1;
         }
     }
     return 0;
 }
 
+static void cache_pressure_release(void);
+
+static void cache_sync(void)
+{
+    size_t used = 0;
+    int i;
+
+    for (i = 0; i < XENUS_SCAN_RING; i++) {
+        if (cache[i].used)
+            used++;
+    }
+    if (xenus_cache_register("security-scan", cache_pressure_release) != 0)
+        return;
+    xenus_cache_set("security-scan", used * sizeof(cache_entry_t), 1);
+}
+
+static void cache_pressure_release(void)
+{
+    memset(cache, 0, sizeof(cache));
+    cache_next = 0;
+    cache_sync();
+}
+
+static void cache_clear(void)
+{
+    cache_pressure_release();
+}
+
 static void cache_store(const char *path, const struct stat *st,
-                        const scde_scan_result_t *res)
+                        const xenus_scan_result_t *res)
 {
     cache_entry_t *e = &cache[cache_next];
     size_t plen = strlen(path);
 
-    if (plen >= SCDE_PATH_MAX)
+    if (plen >= XENUS_PATH_MAX)
         return;
     e->used = 1;
     memcpy(e->path, path, plen + 1);
     e->size = st->st_size;
     e->mtime = (int64_t)st->st_mtime;
     e->res = *res;
-    e->res.flags &= ~SCDE_SCANFLAG_CACHED;
-    cache_next = (cache_next + 1) % SCDE_SCAN_RING;
+    e->res.flags &= ~XENUS_SCANFLAG_CACHED;
+    cache_next = (cache_next + 1) % XENUS_SCAN_RING;
+    cache_sync();
 }
 
 static void cache_drop(const char *path)
 {
     int i;
 
-    for (i = 0; i < SCDE_SCAN_RING; i++) {
+    for (i = 0; i < XENUS_SCAN_RING; i++) {
         if (cache[i].used && strcmp(cache[i].path, path) == 0)
             memset(&cache[i], 0, sizeof(cache[i]));
     }
+    cache_sync();
 }
 
 /* ------------------------------------------------------------- database -- */
@@ -940,16 +971,16 @@ static int db_path(char *out, size_t out_len, const char *dir,
 
     n = snprintf(out, out_len, "%.*s/%s", (int)(out_len - 16), dir, name);
     if (n <= 0 || (size_t)n >= out_len)
-        return SCDE_ERR_ARG;
-    if (scde_path_is_safe(out) != SCDE_OK)
-        return SCDE_ERR_ARG;
-    return SCDE_OK;
+        return XENUS_ERR_ARG;
+    if (xenus_path_is_safe(out) != XENUS_OK)
+        return XENUS_ERR_ARG;
+    return XENUS_OK;
 }
 
 /*
  * Opens a database file with the required hygiene: regular file, not a
- * symlink, not executable, inside a safe path.  Returns SCDE_ERR_NOT_FOUND
- * when it simply does not exist (that is fine), SCDE_ERR otherwise.
+ * symlink, not executable, inside a safe path.  Returns XENUS_ERR_NOT_FOUND
+ * when it simply does not exist (that is fine), XENUS_ERR otherwise.
  */
 static FILE *db_open(const char *full)
 {
@@ -958,12 +989,12 @@ static FILE *db_open(const char *full)
     if (lstat(full, &st) != 0)
         return NULL;
     if (!S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
-        scde_audit_log(SCDE_AUDIT_POLICY_DENIED, full, 60,
+        xenus_audit_log(XENUS_AUDIT_POLICY_DENIED, full, 60,
                        "database is not a regular file");
         return NULL;
     }
     if (st.st_mode & 0111) {
-        scde_audit_log(SCDE_AUDIT_POLICY_DENIED, full, 70,
+        xenus_audit_log(XENUS_AUDIT_POLICY_DENIED, full, 70,
                        "database must not be executable");
         return NULL;
     }
@@ -976,7 +1007,7 @@ static int header_ok(char *line, size_t len, FILE *f)
 
     for (i = 0; i < 4 && fgets(line, (int)len, f); i++) {
         if (line[0] == '#') {
-            if (strncmp(line, "# scde security", 15) == 0)
+            if (strncmp(line, "# xenus security", 15) == 0)
                 return 1;
             continue;
         }
@@ -994,16 +1025,16 @@ static int load_rules(const char *dir)
     FILE *f;
 
     n_db_rules = 0;
-    if (db_path(full, sizeof(full), dir, "rules.conf") != SCDE_OK)
-        return SCDE_OK;
+    if (db_path(full, sizeof(full), dir, "rules.conf") != XENUS_OK)
+        return XENUS_OK;
     f = db_open(full);
     if (!f)
-        return SCDE_OK;
+        return XENUS_OK;
     if (!header_ok(line, sizeof(line), f)) {
         fclose(f);
-        scde_audit_log(SCDE_AUDIT_POLICY_DENIED, full, 50,
+        xenus_audit_log(XENUS_AUDIT_POLICY_DENIED, full, 50,
                        "rules.conf header missing");
-        return SCDE_OK;
+        return XENUS_OK;
     }
     while (fgets(line, sizeof(line), f) && n_db_rules < MAX_RULES) {
         char *bar1;
@@ -1032,21 +1063,21 @@ static int load_rules(const char *dir)
             continue;
         cat = bar1 + 1;
         if (strcmp(cat, "destructive") == 0)
-            reason = SCDE_REASON_SCRIPT_DESTRUCTIVE;
+            reason = XENUS_REASON_SCRIPT_DESTRUCTIVE;
         else if (strcmp(cat, "priv") == 0)
-            reason = SCDE_REASON_SCRIPT_PRIV;
+            reason = XENUS_REASON_SCRIPT_PRIV;
         else if (strcmp(cat, "cred") == 0)
-            reason = SCDE_REASON_SCRIPT_CRED;
+            reason = XENUS_REASON_SCRIPT_CRED;
         else if (strcmp(cat, "persist") == 0)
-            reason = SCDE_REASON_SCRIPT_PERSIST;
+            reason = XENUS_REASON_SCRIPT_PERSIST;
         else if (strcmp(cat, "remote") == 0)
-            reason = SCDE_REASON_SCRIPT_REMOTE;
+            reason = XENUS_REASON_SCRIPT_REMOTE;
         else if (strcmp(cat, "obfusc") == 0)
-            reason = SCDE_REASON_SCRIPT_OBFUSC;
+            reason = XENUS_REASON_SCRIPT_OBFUSC;
         else if (strcmp(cat, "name") == 0 || strcmp(cat, "path") == 0 ||
                  strcmp(cat, "type") == 0 || strcmp(cat, "perm") == 0 ||
                  strcmp(cat, "elf") == 0)
-            reason = SCDE_REASON_SIGNATURE;
+            reason = XENUS_REASON_SIGNATURE;
         else
             continue;
         needle = bar2 + 1;              /* *bar2 = '\0' terminated cat */
@@ -1063,7 +1094,7 @@ static int load_rules(const char *dir)
         if (i != slen)
             continue;
         if (!reason_group(reason, &group) ||
-            reason == SCDE_REASON_SIGNATURE)
+            reason == XENUS_REASON_SIGNATURE)
             group = G_COUNT;        /* signature rules are uncapped */
         db_rules[n_db_rules].weight = (int)w;
         db_rules[n_db_rules].reason = reason;
@@ -1072,7 +1103,7 @@ static int load_rules(const char *dir)
         n_db_rules++;
     }
     fclose(f);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 static int load_hashes(const char *dir, const char *name, int trusted)
@@ -1084,16 +1115,16 @@ static int load_hashes(const char *dir, const char *name, int trusted)
     int *count = trusted ? &n_trust_hashes : &n_bad_hashes;
 
     *count = 0;
-    if (db_path(full, sizeof(full), dir, name) != SCDE_OK)
-        return SCDE_OK;
+    if (db_path(full, sizeof(full), dir, name) != XENUS_OK)
+        return XENUS_OK;
     f = db_open(full);
     if (!f)
-        return SCDE_OK;
+        return XENUS_OK;
     if (!header_ok(line, sizeof(line), f)) {
         fclose(f);
-        scde_audit_log(SCDE_AUDIT_POLICY_DENIED, full, 50,
+        xenus_audit_log(XENUS_AUDIT_POLICY_DENIED, full, 50,
                        "hash database header missing");
-        return SCDE_OK;
+        return XENUS_OK;
     }
     while (fgets(line, sizeof(line), f) && *count < MAX_HASHES) {
         char *sp;
@@ -1125,13 +1156,13 @@ static int load_hashes(const char *dir, const char *name, int trusted)
         (*count)++;
     }
     fclose(f);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 static int load_dbs(const char *dir)
 {
     if (!dir || !*dir)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
 
     /* Reload security databases from scratch. */
     memset(db_rules, 0, sizeof(db_rules));
@@ -1144,27 +1175,27 @@ static int load_dbs(const char *dir)
     load_rules(dir);
     load_hashes(dir, "hashes.db", 0);
     load_hashes(dir, "trusted.db", 1);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 /* ------------------------------------------------------------- scanning -- */
 
 static int status_from_score(int score, int bad_hash)
 {
-    if (bad_hash && scde_policy_get(SCDE_POL_BLOCK_KNOWN_BAD))
-        return SCDE_THREAT_BLOCKED;
+    if (bad_hash && xenus_policy_get(XENUS_POL_BLOCK_KNOWN_BAD))
+        return XENUS_THREAT_BLOCKED;
     if (score >= 75)
-        return SCDE_THREAT_MALICIOUS;
+        return XENUS_THREAT_MALICIOUS;
     if (score >= 50)
-        return SCDE_THREAT_SUSPICIOUS;
+        return XENUS_THREAT_SUSPICIOUS;
     if (score >= 20)
-        return SCDE_THREAT_UNKNOWN;
-    return SCDE_THREAT_SAFE;
+        return XENUS_THREAT_UNKNOWN;
+    return XENUS_THREAT_SAFE;
 }
 
-int scde_scan_file(const char *path, scde_scan_result_t *result)
+int xenus_scan_file(const char *path, xenus_scan_result_t *result)
 {
-    scde_scan_result_t r;
+    xenus_scan_result_t r;
     struct stat st;
     struct stat target_st;
     const struct stat *ps;
@@ -1179,50 +1210,50 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
     int bad_hash = 0;
     int trusted_hash = 0;
     int score;
-    int best_reason = SCDE_REASON_NONE;
+    int best_reason = XENUS_REASON_NONE;
     int mode;
     int is_link = 0;
     off_t read_size = 0;
-    char link_target[SCDE_PATH_MAX];
+    char link_target[XENUS_PATH_MAX];
 
     if (!path || !result)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     memset(result, 0, sizeof(*result));
     memset(&a, 0, sizeof(a));
     memset(&r, 0, sizeof(r));
     detail[0] = '\0';
-    r.status = SCDE_THREAT_UNKNOWN;
-    r.trust = SCDE_TRUST_UNKNOWN;
-    r.hash_status = SCDE_HASH_NOT_COMPUTED;
+    r.status = XENUS_THREAT_UNKNOWN;
+    r.trust = XENUS_TRUST_UNKNOWN;
+    r.hash_status = XENUS_HASH_NOT_COMPUTED;
 
-    scde__ensure();
-    mode = scde_security_get_scan_mode();
+    xenus__ensure();
+    mode = xenus_security_get_scan_mode();
     link_target[0] = '\0';
-    if (mode == SCDE_SCAN_OFF) {
-        r.flags |= SCDE_SCANFLAG_SKIPPED;
-        r.hash_status = SCDE_HASH_SKIPPED;
+    if (mode == XENUS_SCAN_OFF) {
+        r.flags |= XENUS_SCANFLAG_SKIPPED;
+        r.hash_status = XENUS_HASH_SKIPPED;
         snprintf(r.detail, sizeof(r.detail), "scanner off");
         *result = r;
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     }
 
-    if (scde_path_is_safe(path) != SCDE_OK) {
-        r.status = SCDE_THREAT_MALICIOUS;
+    if (xenus_path_is_safe(path) != XENUS_OK) {
+        r.status = XENUS_THREAT_MALICIOUS;
         r.risk = 90;
-        r.reason = SCDE_REASON_PATH;
+        r.reason = XENUS_REASON_PATH;
         snprintf(r.detail, sizeof(r.detail), "unsafe path rejected");
         *result = r;
-        scde__stats()->threats++;
-        scde_audit_log(SCDE_AUDIT_THREAT_DETECTED, path, 90, "unsafe path");
-        return SCDE_OK;
+        xenus__stats()->threats++;
+        xenus_audit_log(XENUS_AUDIT_THREAT_DETECTED, path, 90, "unsafe path");
+        return XENUS_OK;
     }
 
     if (lstat(path, &st) != 0) {
-        r.status = SCDE_THREAT_UNKNOWN;
-        r.reason = SCDE_REASON_IO;
+        r.status = XENUS_THREAT_UNKNOWN;
+        r.reason = XENUS_REASON_IO;
         snprintf(r.detail, sizeof(r.detail), "missing or unreadable");
         *result = r;
-        return SCDE_ERR_NOT_FOUND;
+        return XENUS_ERR_NOT_FOUND;
     }
 
     /* cache: path + size + mtime.  Symlinks are never cached: the result
@@ -1230,23 +1261,23 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
        would only cover the link itself - a stale SAFE verdict otherwise. */
     is_link = S_ISLNK(st.st_mode) ? 1 : 0;
     if (!is_link && cache_lookup(path, &st, &r)) {
-        scde__stats()->cache_hits++;
+        xenus__stats()->cache_hits++;
         *result = r;
-        return SCDE_OK;
+        return XENUS_OK;
     }
 
     ps = &st;
     if (S_ISLNK(st.st_mode)) {
-        char target[SCDE_PATH_MAX];
-        char resolved[SCDE_PATH_MAX + 64];
+        char target[XENUS_PATH_MAX];
+        char resolved[XENUS_PATH_MAX + 64];
         ssize_t tn;
         const char *slash;
         size_t plen;
 
-        r.flags |= SCDE_SCANFLAG_SYMLINK;
+        r.flags |= XENUS_SCANFLAG_SYMLINK;
         tn = readlink(path, target, sizeof(target) - 1);
         if (tn <= 0) {
-            acc_add(&a, G_SYMLINK, 40, SCDE_REASON_SYMLINK);
+            acc_add(&a, G_SYMLINK, 40, XENUS_REASON_SYMLINK);
         } else {
             target[tn] = '\0';
             if (target[0] == '/') {
@@ -1259,9 +1290,9 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
                          (int)plen, slash ? path : "", 
                          (int)(sizeof(resolved) - plen - 3), target);
             }
-            acc_add(&a, G_SYMLINK, 40, SCDE_REASON_SYMLINK);
+            acc_add(&a, G_SYMLINK, 40, XENUS_REASON_SYMLINK);
             if (sensitive_target(resolved) || strstr(target, "..") != NULL)
-                acc_add(&a, G_SYMLINK, 45, SCDE_REASON_SYMLINK);
+                acc_add(&a, G_SYMLINK, 45, XENUS_REASON_SYMLINK);
             if (stat(path, &target_st) == 0 && S_ISREG(target_st.st_mode)) {
                 ps = &target_st;
                 /* read the content through the resolved target (single
@@ -1270,41 +1301,41 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
                 snprintf(link_target, sizeof(link_target), "%.*s",
                          (int)(sizeof(link_target) - 1), resolved);
             } else {
-                acc_add(&a, G_SYMLINK, 30, SCDE_REASON_SYMLINK);
+                acc_add(&a, G_SYMLINK, 30, XENUS_REASON_SYMLINK);
             }
         }
     } else if (!S_ISREG(st.st_mode)) {
-        r.status = SCDE_THREAT_UNKNOWN;
-        r.reason = SCDE_REASON_TYPE;
+        r.status = XENUS_THREAT_UNKNOWN;
+        r.reason = XENUS_REASON_TYPE;
         snprintf(r.detail, sizeof(r.detail), "not a regular file");
-        scde__stats()->scans++;
+        xenus__stats()->scans++;
         *result = r;
-        if (scde_policy_get(SCDE_POL_AUDIT_FILE_SCANS))
-            scde_audit_log(SCDE_AUDIT_FILE_SCANNED, path, 0, "not a file");
-        return SCDE_OK;
+        if (xenus_policy_get(XENUS_POL_AUDIT_FILE_SCANS))
+            xenus_audit_log(XENUS_AUDIT_FILE_SCANNED, path, 0, "not a file");
+        return XENUS_OK;
     }
 
     exec_bit = (ps->st_mode & 0111) != 0;
     if (exec_bit)
-        r.flags |= SCDE_SCANFLAG_EXEC;
+        r.flags |= XENUS_SCANFLAG_EXEC;
 
     /* metadata: permissions */
     if (ps->st_mode & 04000)
-        acc_add(&a, G_PERM, 35, SCDE_REASON_PERM);
+        acc_add(&a, G_PERM, 35, XENUS_REASON_PERM);
     if (ps->st_mode & 02000)
-        acc_add(&a, G_PERM, 25, SCDE_REASON_PERM);
+        acc_add(&a, G_PERM, 25, XENUS_REASON_PERM);
     if ((ps->st_mode & 00002) && exec_bit)
-        acc_add(&a, G_PERM, 25, SCDE_REASON_PERM);
+        acc_add(&a, G_PERM, 25, XENUS_REASON_PERM);
 
     /* metadata: name */
     if (double_extension(path)) {
-        acc_add(&a, G_NAME, 30, SCDE_REASON_NAME);
+        acc_add(&a, G_NAME, 30, XENUS_REASON_NAME);
         snprintf(detail, sizeof(detail), "double extension");
     }
 
     /* metadata: location (executables in world-writable temp dirs) */
     if (path_group_for(path, exec_bit || ext_is_exec(path)))
-        acc_add(&a, G_PATH, 20, SCDE_REASON_PATH);
+        acc_add(&a, G_PATH, 20, XENUS_REASON_PATH);
 
     /* type inspection from the first bytes.  Symlinks are read through the
        resolved target captured above; the result is never cached, so a
@@ -1312,7 +1343,7 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
     fd = open(is_link && link_target[0] ? link_target : path,
               O_RDONLY | O_NOFOLLOW);
     if (fd < 0) {
-        acc_add(&a, G_TYPE, 30, SCDE_REASON_IO);
+        acc_add(&a, G_TYPE, 30, XENUS_REASON_IO);
         snprintf(detail, sizeof(detail), "cannot read");
     } else {
         struct stat fd_st;
@@ -1325,7 +1356,7 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
         } else {
             close(fd);
             fd = -1;
-            acc_add(&a, G_TYPE, 30, SCDE_REASON_IO);
+            acc_add(&a, G_TYPE, 30, XENUS_REASON_IO);
             snprintf(detail, sizeof(detail), "cannot read");
         }
         if (fd >= 0) {
@@ -1335,12 +1366,12 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
         if (n >= 4 && head[0] == 0x7f && head[1] == 'E' && head[2] == 'L' &&
             head[3] == 'F') {
             is_elf = 1;
-            r.flags |= SCDE_SCANFLAG_ELF;
+            r.flags |= XENUS_SCANFLAG_ELF;
             elf_scan(fd, read_size, head, &a, path, exec_bit);
             a.deep = 1;
         } else if (n >= 2 && head[0] == '#' && head[1] == '!') {
             is_script = 1;
-            r.flags |= SCDE_SCANFLAG_SCRIPT;
+            r.flags |= XENUS_SCANFLAG_SCRIPT;
         } else if (n > 0 && looks_text(head, n)) {
             /* plain text: still worth the signature rules on explicit
                scans; the watcher never gets here (not relevant) */
@@ -1348,10 +1379,10 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
         } else if (n > 0) {
             /* binary that is not ELF */
             if (suffix_ci(path, ".so")) {
-                acc_add(&a, G_TYPE, 55, SCDE_REASON_TYPE);
+                acc_add(&a, G_TYPE, 55, XENUS_REASON_TYPE);
                 snprintf(detail, sizeof(detail), "not an ELF shared object");
             } else if (exec_bit) {
-                acc_add(&a, G_TYPE, 25, SCDE_REASON_TYPE);
+                acc_add(&a, G_TYPE, 25, XENUS_REASON_TYPE);
                 snprintf(detail, sizeof(detail), "unknown executable type");
             }
         }
@@ -1367,16 +1398,16 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
             ssize_t got;
 
             if (is_script)
-                r.flags |= SCDE_SCANFLAG_SCRIPT;
+                r.flags |= XENUS_SCANFLAG_SCRIPT;
             if (total > DEEP_SIZE_MAX)
                 total = DEEP_SIZE_MAX;
             got = pread(fd, body, total, 0);
             if (got > 0) {
                 body[got] = '\0';
                 if (is_script && !looks_text(body, (size_t)got))
-                    acc_add(&a, G_TYPE, 20, SCDE_REASON_TYPE);
+                    acc_add(&a, G_TYPE, 20, XENUS_REASON_TYPE);
                 if (is_script || exec_bit || n_db_rules > 0 ||
-                    r.flags & SCDE_SCANFLAG_SYMLINK)
+                    r.flags & XENUS_SCANFLAG_SYMLINK)
                     script_scan(body, (size_t)got, &a, detail,
                                 sizeof(detail));
             }
@@ -1405,19 +1436,19 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
             off += got;
         }
         sha256_final(&ctx, hex);
-        r.hash_status = SCDE_HASH_COMPUTED;
+        r.hash_status = XENUS_HASH_COMPUTED;
         if (find_hash(bad_hashes, n_bad_hashes, hex)) {
             bad_hash = 1;
-            r.hash_status = SCDE_HASH_KNOWN_BAD;
+            r.hash_status = XENUS_HASH_KNOWN_BAD;
             a.definitive = 1;
             snprintf(detail, sizeof(detail), "known-bad hash");
         } else if (find_hash(trust_hashes, n_trust_hashes, hex)) {
             trusted_hash = 1;
-            r.hash_status = SCDE_HASH_KNOWN_TRUSTED;
-            r.trust = SCDE_TRUST_TRUSTED;
+            r.hash_status = XENUS_HASH_KNOWN_TRUSTED;
+            r.trust = XENUS_TRUST_TRUSTED;
         }
     } else {
-        r.hash_status = SCDE_HASH_SKIPPED;
+        r.hash_status = XENUS_HASH_SKIPPED;
     }
     if (fd >= 0)
         close(fd);
@@ -1435,49 +1466,49 @@ int scde_scan_file(const char *path, scde_scan_result_t *result)
         score = 100;
 
     if (bad_hash) {
-        r.reason = SCDE_REASON_HASH;
-        r.status = SCDE_THREAT_BLOCKED;
-        if (!scde_policy_get(SCDE_POL_BLOCK_KNOWN_BAD)) {
-            r.status = SCDE_THREAT_MALICIOUS;
+        r.reason = XENUS_REASON_HASH;
+        r.status = XENUS_THREAT_BLOCKED;
+        if (!xenus_policy_get(XENUS_POL_BLOCK_KNOWN_BAD)) {
+            r.status = XENUS_THREAT_MALICIOUS;
             score = 100;
         }
     } else {
-        if (a.sig_risk > 0 && best_reason != SCDE_REASON_SIGNATURE)
-            best_reason = a.sig_risk >= score ? SCDE_REASON_SIGNATURE
+        if (a.sig_risk > 0 && best_reason != XENUS_REASON_SIGNATURE)
+            best_reason = a.sig_risk >= score ? XENUS_REASON_SIGNATURE
                                               : best_reason;
         r.status = (int16_t)status_from_score(score, 0);
         r.reason = (int16_t)best_reason;
     }
     r.risk = (int16_t)score;
     if (a.deep)
-        r.flags |= SCDE_SCANFLAG_DEEP;
+        r.flags |= XENUS_SCANFLAG_DEEP;
     snprintf(r.detail, sizeof(r.detail), "%.*s",
              (int)(sizeof(r.detail) - 1),
              detail[0] ? detail : (bad_hash ? "known-bad hash" : "-"));
 
     /* trust from the path trust table (hash trust already reflected) */
-    if (r.trust == SCDE_TRUST_UNKNOWN)
-        r.trust = (int16_t)scde_trust_get(path);
+    if (r.trust == XENUS_TRUST_UNKNOWN)
+        r.trust = (int16_t)xenus_trust_get(path);
 
-    scde__stats()->scans++;
-    if (r.status >= SCDE_THREAT_SUSPICIOUS) {
-        scde__stats()->threats++;
-        scde_audit_log(SCDE_AUDIT_THREAT_DETECTED, path, score, r.detail);
-        if (r.status == SCDE_THREAT_BLOCKED)
-            scde__stats()->blocked++;
+    xenus__stats()->scans++;
+    if (r.status >= XENUS_THREAT_SUSPICIOUS) {
+        xenus__stats()->threats++;
+        xenus_audit_log(XENUS_AUDIT_THREAT_DETECTED, path, score, r.detail);
+        if (r.status == XENUS_THREAT_BLOCKED)
+            xenus__stats()->blocked++;
     }
-    if (scde_policy_get(SCDE_POL_AUDIT_FILE_SCANS))
-        scde_audit_log(SCDE_AUDIT_FILE_SCANNED, path, score, r.detail);
-    if (r.status == SCDE_THREAT_BLOCKED)
-        scde_audit_log(SCDE_AUDIT_THREAT_BLOCKED, path, score, r.detail);
+    if (xenus_policy_get(XENUS_POL_AUDIT_FILE_SCANS))
+        xenus_audit_log(XENUS_AUDIT_FILE_SCANNED, path, score, r.detail);
+    if (r.status == XENUS_THREAT_BLOCKED)
+        xenus_audit_log(XENUS_AUDIT_THREAT_BLOCKED, path, score, r.detail);
 
     if (!is_link)
         cache_store(path, &st, &r);
     *result = r;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_hash_file(const char *path, char out_hex[65])
+int xenus_hash_file(const char *path, char out_hex[65])
 {
     sha256_ctx ctx;
     unsigned char io[8192];
@@ -1487,19 +1518,19 @@ int scde_hash_file(const char *path, char out_hex[65])
     int fd;
 
     if (!path || !out_hex)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     out_hex[0] = '\0';
-    if (scde_path_is_safe(path) != SCDE_OK)
-        return SCDE_ERR_ARG;
+    if (xenus_path_is_safe(path) != XENUS_OK)
+        return XENUS_ERR_ARG;
     if (lstat(path, &st) != 0)
-        return SCDE_ERR_NOT_FOUND;
+        return XENUS_ERR_NOT_FOUND;
     if (!S_ISREG(st.st_mode))
-        return SCDE_ERR;
+        return XENUS_ERR;
     if ((uint64_t)st.st_size > SCAN_SIZE_MAX)
-        return SCDE_ERR_FULL;
+        return XENUS_ERR_FULL;
     fd = open(path, O_RDONLY | O_NOFOLLOW);
     if (fd < 0)
-        return SCDE_ERR_IO;
+        return XENUS_ERR_IO;
 
     sha256_init(&ctx);
     while ((got = pread(fd, io, sizeof(io), off)) > 0) {
@@ -1508,48 +1539,48 @@ int scde_hash_file(const char *path, char out_hex[65])
     }
     close(fd);
     sha256_final(&ctx, out_hex);
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 /* ------------------------------------------------------------ API bits -- */
 
-int scde_security_set_scan_mode(scde_scan_mode_t mode)
+int xenus_security_set_scan_mode(xenus_scan_mode_t mode)
 {
-    scde_scan_mode_t old = (scde_scan_mode_t)scan_mode;
+    xenus_scan_mode_t old = (xenus_scan_mode_t)scan_mode;
 
-    if (mode != SCDE_SCAN_ALWAYS_ON && mode != SCDE_SCAN_PASSIVE &&
-        mode != SCDE_SCAN_OFF)
-        return SCDE_ERR_ARG;
+    if (mode != XENUS_SCAN_ALWAYS_ON && mode != XENUS_SCAN_PASSIVE &&
+        mode != XENUS_SCAN_OFF)
+        return XENUS_ERR_ARG;
     scan_mode = mode;
-    if (mode != SCDE_SCAN_ALWAYS_ON)
-        scde__scanner_watch_stop();
+    if (mode != XENUS_SCAN_ALWAYS_ON)
+        xenus__scanner_watch_stop();
     if (old != mode) {
-        scde_audit_log(SCDE_AUDIT_SCANNER_MODE_CHANGED, scde_scan_mode_name(mode),
+        xenus_audit_log(XENUS_AUDIT_SCANNER_MODE_CHANGED, xenus_scan_mode_name(mode),
                        0, "mode changed");
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-scde_scan_mode_t scde_security_get_scan_mode(void)
+xenus_scan_mode_t xenus_security_get_scan_mode(void)
 {
-    return (scde_scan_mode_t)scan_mode;
+    return (xenus_scan_mode_t)scan_mode;
 }
 
-const char *scde_scan_mode_name(scde_scan_mode_t mode)
+const char *xenus_scan_mode_name(xenus_scan_mode_t mode)
 {
     switch (mode) {
-    case SCDE_SCAN_ALWAYS_ON:
+    case XENUS_SCAN_ALWAYS_ON:
         return "always-on";
-    case SCDE_SCAN_PASSIVE:
+    case XENUS_SCAN_PASSIVE:
         return "passive";
-    case SCDE_SCAN_OFF:
+    case XENUS_SCAN_OFF:
         return "off";
     default:
         return "unknown";
     }
 }
 
-int scde_security_db_info(int *rules, int *hashes, int *trusted)
+int xenus_security_db_info(int *rules, int *hashes, int *trusted)
 {
     if (rules)
         *rules = n_db_rules;
@@ -1557,88 +1588,87 @@ int scde_security_db_info(int *rules, int *hashes, int *trusted)
         *hashes = n_bad_hashes;
     if (trusted)
         *trusted = n_trust_hashes;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde__scanner_init(const char *dir)
+int xenus__scanner_init(const char *dir)
 {
     if (!scanner_ready) {
-        memset(cache, 0, sizeof(cache));
-        cache_next = 0;
-        scan_mode = SCDE_SCAN_PASSIVE;
+        cache_clear();
+        scan_mode = XENUS_SCAN_PASSIVE;
         scanner_ready = 1;
     }
     return load_dbs(dir);
 }
 
-void scde__scanner_shutdown(void)
+void xenus__scanner_shutdown(void)
 {
-    scde__scanner_watch_stop();
-    memset(cache, 0, sizeof(cache));
+    xenus__scanner_watch_stop();
+    cache_clear();
     memset(db_rules, 0, sizeof(db_rules));
     memset(bad_hashes, 0, sizeof(bad_hashes));
     memset(trust_hashes, 0, sizeof(trust_hashes));
     n_db_rules = 0;
     n_bad_hashes = 0;
     n_trust_hashes = 0;
-    cache_next = 0;
+    xenus_cache_unregister("security-scan");
 }
 
-int scde__scanner_reload(void)
+int xenus__scanner_reload(void)
 {
-    scde__ensure();
-    return load_dbs(scde_security_db_dir());
+    xenus__ensure();
+    return load_dbs(xenus_security_db_dir());
 }
 
 /* ------------------------------------------------------------ watching -- */
 
-int scde__scanner_watch_dir(const char *dir)
+int xenus__scanner_watch_dir(const char *dir)
 {
     int wd;
     size_t dlen;
 
-    if (scan_mode != SCDE_SCAN_ALWAYS_ON)
-        return SCDE_ERR_STATE;
-    if (!dir || !*dir || scde_path_is_safe(dir) != SCDE_OK)
-        return SCDE_ERR_ARG;
+    if (scan_mode != XENUS_SCAN_ALWAYS_ON)
+        return XENUS_ERR_STATE;
+    if (!dir || !*dir || xenus_path_is_safe(dir) != XENUS_OK)
+        return XENUS_ERR_ARG;
     dlen = strlen(dir);
     if (dlen >= sizeof(watch_dirs[0]))
-        return SCDE_ERR_ARG;
-    if (n_watch >= SCDE_WATCH_MAX)
-        return SCDE_ERR_FULL;
+        return XENUS_ERR_ARG;
+    if (n_watch >= XENUS_WATCH_MAX)
+        return XENUS_ERR_FULL;
     {
         int i;
 
         for (i = 0; i < n_watch; i++) {
             if (strcmp(watch_dirs[i], dir) == 0)
-                return SCDE_OK;
+                return XENUS_OK;
         }
     }
     if (ifd < 0) {
         ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
         if (ifd < 0) {
-            scde_log(SCDE_LOG_WARN, "security: inotify unavailable");
-            return SCDE_ERR_IO;
+            xenus_log(XENUS_LOG_WARN, "security: inotify unavailable");
+            return XENUS_ERR_IO;
         }
     }
     wd = inotify_add_watch(ifd, dir,
                            IN_CREATE | IN_CLOSE_WRITE | IN_MOVED_TO |
                            IN_MOVED_FROM | IN_ATTRIB | IN_DELETE);
     if (wd < 0)
-        return SCDE_ERR_IO;
+        return XENUS_ERR_IO;
     snprintf(watch_dirs[n_watch], sizeof(watch_dirs[0]), "%.*s",
              (int)(sizeof(watch_dirs[0]) - 1), dir);
     watch_wd[n_watch] = wd;
     n_watch++;
-    scde_logf(SCDE_LOG_INFO, "security: watching %s", dir);
-    return SCDE_OK;
+    xenus_logf(XENUS_LOG_INFO, "security: watching %s", dir);
+    return XENUS_OK;
 }
 
 /* Forward declarations for watcher shutdown. */
 static size_t scanner_event_len;
 static size_t scanner_event_off;
 
-void scde__scanner_watch_stop(void)
+void xenus__scanner_watch_stop(void)
 {
     int i;
 
@@ -1656,7 +1686,7 @@ void scde__scanner_watch_stop(void)
     }
 }
 
-int scde__scanner_watch_fd(void)
+int xenus__scanner_watch_fd(void)
 {
     return ifd;
 }
@@ -1681,7 +1711,7 @@ static int relevant_name(const char *name, const struct stat *st)
 
 static void handle_watch(const char *dir, const char *name, uint32_t mask)
 {
-    char path[SCDE_PATH_MAX];
+    char path[XENUS_PATH_MAX];
     struct stat st;
     int n;
 
@@ -1700,9 +1730,9 @@ static void handle_watch(const char *dir, const char *name, uint32_t mask)
         return;                     /* never scan the world */
 
     {
-        scde_scan_result_t r;
+        xenus_scan_result_t r;
 
-        scde_scan_file(path, &r);   /* quick -> cache -> rules -> score */
+        xenus_scan_file(path, &r);   /* quick -> cache -> rules -> score */
     }
 }
 
@@ -1718,17 +1748,17 @@ static _Alignas(struct inotify_event)
 static size_t scanner_event_len;
 static size_t scanner_event_off;
 
-int scde__scanner_pending(void)
+int xenus__scanner_pending(void)
 {
     return ifd >= 0 && scanner_event_off < scanner_event_len;
 }
 
-int scde__scanner_pump(void)
+int xenus__scanner_pump(void)
 {
     int processed = 0;
 
     if (ifd < 0)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
 
     /* Read only when the previous batch has been fully consumed. */
     if (scanner_event_off >= scanner_event_len) {
@@ -1745,8 +1775,8 @@ int scde__scanner_pump(void)
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 return 0;
-            scde_log(SCDE_LOG_WARN, "security: inotify read failed");
-            return SCDE_ERR_IO;
+            xenus_log(XENUS_LOG_WARN, "security: inotify read failed");
+            return XENUS_ERR_IO;
         }
         if (n == 0)
             return 0;
@@ -1762,7 +1792,7 @@ int scde__scanner_pump(void)
         const char *dir;
 
         if (remaining < sizeof(struct inotify_event)) {
-            scde_log(SCDE_LOG_WARN,
+            xenus_log(XENUS_LOG_WARN,
                      "security: malformed inotify record header");
             scanner_event_len = 0;
             scanner_event_off = 0;
@@ -1773,7 +1803,7 @@ int scde__scanner_pump(void)
              (scanner_event_buffer + scanner_event_off);
 
         if ((size_t)ev->len > remaining - sizeof(*ev)) {
-            scde_log(SCDE_LOG_WARN,
+            xenus_log(XENUS_LOG_WARN,
                      "security: malformed inotify record length");
             scanner_event_len = 0;
             scanner_event_off = 0;
@@ -1788,9 +1818,8 @@ int scde__scanner_pump(void)
              * later observations cannot reuse potentially stale entries.
              * Full directory reconciliation is intentionally separate.
              */
-            memset(cache, 0, sizeof(cache));
-            cache_next = 0;
-            scde_log(SCDE_LOG_WARN,
+            cache_clear();
+            xenus_log(XENUS_LOG_WARN,
                      "security: inotify queue overflow; scan cache invalidated");
         } else if (ev->len > 0 &&
                    memchr(ev->name, '\0', ev->len) != NULL) {
@@ -1799,7 +1828,7 @@ int scde__scanner_pump(void)
                 handle_watch(dir, ev->name, ev->mask);
         }
 
-        scde__stats()->watch_events++;
+        xenus__stats()->watch_events++;
         processed++;
         scanner_event_off += record_len;
     }

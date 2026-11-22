@@ -1,10 +1,10 @@
 #define _XOPEN_SOURCE 700
 /*
- * SCDE Security Layer - core: lifecycle, path validation, trust state,
+ * XENUS Security Layer - core: lifecycle, path validation, trust state,
  * statistics and the plugin gate.
  */
-#include <scde/plugin.h>
-#include <scde/security.h>
+#include <xenus/plugin.h>
+#include <xenus/security.h>
 
 #include "security_internal.h"
 
@@ -17,17 +17,17 @@
 static int inited;
 static int initing;
 static char db_dir[512];
-static scde_scan_stats_t stats;
+static xenus_scan_stats_t stats;
 
 typedef struct {
     int used;
-    char path[SCDE_PATH_MAX];
-    int trust;                      /* scde_trust_t */
+    char path[XENUS_PATH_MAX];
+    int trust;                      /* xenus_trust_t */
 } trust_entry_t;
 
-static trust_entry_t trust_table[SCDE_TRUST_MAX];
+static trust_entry_t trust_table[XENUS_TRUST_MAX];
 
-scde_scan_stats_t *scde__stats(void)
+xenus_scan_stats_t *xenus__stats(void)
 {
     return &stats;
 }
@@ -36,7 +36,7 @@ scde_scan_stats_t *scde__stats(void)
 
 static void resolve_default_dir(char *out, size_t out_len)
 {
-    const char *env = getenv("SCDE_SECURITY_DIR");
+    const char *env = getenv("XENUS_SECURITY_DIR");
     const char *home = getenv("HOME");
 
     if (env && *env) {
@@ -46,20 +46,20 @@ static void resolve_default_dir(char *out, size_t out_len)
     if (home && *home) {
         char probe[400];
 
-        snprintf(probe, sizeof(probe), "%.*s/.config/scde/security",
+        snprintf(probe, sizeof(probe), "%.*s/.config/xenus/security",
                  (int)(sizeof(probe) - 24), home);
         if (access(probe, F_OK) == 0) {
             snprintf(out, out_len, "%.*s", (int)(out_len - 1), probe);
             return;
         }
     }
-    snprintf(out, out_len, "%s", "/etc/scde/security");
+    snprintf(out, out_len, "%s", "/etc/xenus/security");
 }
 
-int scde_security_init(const char *dir)
+int xenus_security_init(const char *dir)
 {
     if (initing)
-        return SCDE_ERR_STATE;
+        return XENUS_ERR_STATE;
     initing = 1;
     if (dir && *dir)
         snprintf(db_dir, sizeof(db_dir), "%.*s",
@@ -73,83 +73,83 @@ int scde_security_init(const char *dir)
         inited = 1;
     }
     initing = 0;
-    scde__scanner_init(db_dir);       /* DB load (inited already set above) */
+    xenus__scanner_init(db_dir);       /* DB load (inited already set above) */
 
     {
-        const char *m = getenv("SCDE_SCAN_MODE");
+        const char *m = getenv("XENUS_SCAN_MODE");
 
         if (m && *m) {
             if (strcmp(m, "always-on") == 0 || strcmp(m, "always") == 0 ||
                 strcmp(m, "1") == 0)
-                scde_security_set_scan_mode(SCDE_SCAN_ALWAYS_ON);
+                xenus_security_set_scan_mode(XENUS_SCAN_ALWAYS_ON);
             else if (strcmp(m, "off") == 0 || strcmp(m, "0") == 0)
-                scde_security_set_scan_mode(SCDE_SCAN_OFF);
+                xenus_security_set_scan_mode(XENUS_SCAN_OFF);
             else
-                scde_security_set_scan_mode(SCDE_SCAN_PASSIVE);
+                xenus_security_set_scan_mode(XENUS_SCAN_PASSIVE);
         }
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-void scde__ensure(void)
+void xenus__ensure(void)
 {
     if (inited || initing)
         return;
-    scde_security_init(NULL);
+    xenus_security_init(NULL);
 }
 
-void scde_security_shutdown(void)
+void xenus_security_shutdown(void)
 {
     if (!inited)
         return;
-    scde__scanner_shutdown();
+    xenus__scanner_shutdown();
     memset(trust_table, 0, sizeof(trust_table));
     memset(&stats, 0, sizeof(stats));
     db_dir[0] = '\0';
     inited = 0;
 }
 
-const char *scde_security_db_dir(void)
+const char *xenus_security_db_dir(void)
 {
-    scde__ensure();
+    xenus__ensure();
     return db_dir;
 }
 
-int scde_security_reload_db(void)
+int xenus_security_reload_db(void)
 {
-    scde__ensure();
-    return scde__scanner_reload();
+    xenus__ensure();
+    return xenus__scanner_reload();
 }
 
 /* ---------------------------------------------------------- path safety -- */
 
-int scde_path_is_safe(const char *path)
+int xenus_path_is_safe(const char *path)
 {
     size_t len;
     size_t i;
 
     if (!path || !*path)
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
     len = strlen(path);
-    if (len >= SCDE_PATH_MAX)
-        return SCDE_ERR_ARG;
+    if (len >= XENUS_PATH_MAX)
+        return XENUS_ERR_ARG;
     if (path[0] != '/')                 /* absolute only: no relative tricks */
-        return SCDE_ERR_ARG;
+        return XENUS_ERR_ARG;
 
     for (i = 0; i < len; i++) {
         unsigned char c = (unsigned char)path[i];
 
         if (c < 0x20 || c == 0x7f)      /* control characters */
-            return SCDE_ERR_ARG;
+            return XENUS_ERR_ARG;
     }
     /* no ".." component anywhere */
     for (i = 0; i + 1 < len; i++) {
         if (path[i] == '.' && path[i + 1] == '.' &&
             (i == 0 || path[i - 1] == '/') &&
             (i + 2 >= len || path[i + 2] == '/' || path[i + 2] == '\0'))
-            return SCDE_ERR;
+            return XENUS_ERR;
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 /* ---------------------------------------------------------------- trust -- */
@@ -159,7 +159,7 @@ static trust_entry_t *trust_slot(const char *path)
     int free_slot = -1;
     int i;
 
-    for (i = 0; i < SCDE_TRUST_MAX; i++) {
+    for (i = 0; i < XENUS_TRUST_MAX; i++) {
         if (!trust_table[i].used) {
             if (free_slot < 0)
                 free_slot = i;
@@ -172,53 +172,53 @@ static trust_entry_t *trust_slot(const char *path)
         return NULL;
     trust_table[free_slot].used = 1;
     snprintf(trust_table[free_slot].path, sizeof(trust_table[free_slot].path),
-             "%.*s", SCDE_PATH_MAX - 1, path);
-    trust_table[free_slot].trust = SCDE_TRUST_UNKNOWN;
+             "%.*s", XENUS_PATH_MAX - 1, path);
+    trust_table[free_slot].trust = XENUS_TRUST_UNKNOWN;
     return &trust_table[free_slot];
 }
 
-int scde_trust_get(const char *path)
+int xenus_trust_get(const char *path)
 {
     int i;
 
-    if (scde_path_is_safe(path) != SCDE_OK)
-        return SCDE_TRUST_UNKNOWN;
-    for (i = 0; i < SCDE_TRUST_MAX; i++) {
+    if (xenus_path_is_safe(path) != XENUS_OK)
+        return XENUS_TRUST_UNKNOWN;
+    for (i = 0; i < XENUS_TRUST_MAX; i++) {
         if (trust_table[i].used && strcmp(trust_table[i].path, path) == 0)
             return trust_table[i].trust;
     }
-    return SCDE_TRUST_UNKNOWN;
+    return XENUS_TRUST_UNKNOWN;
 }
 
-int scde_trust_set(const char *path, int trust)
+int xenus_trust_set(const char *path, int trust)
 {
     trust_entry_t *e;
 
-    if (scde_path_is_safe(path) != SCDE_OK)
-        return SCDE_ERR_ARG;
-    if (trust != SCDE_TRUST_TRUSTED && trust != SCDE_TRUST_UNTRUSTED &&
-        trust != SCDE_TRUST_BLOCKED && trust != SCDE_TRUST_UNKNOWN)
-        return SCDE_ERR_ARG;
+    if (xenus_path_is_safe(path) != XENUS_OK)
+        return XENUS_ERR_ARG;
+    if (trust != XENUS_TRUST_TRUSTED && trust != XENUS_TRUST_UNTRUSTED &&
+        trust != XENUS_TRUST_BLOCKED && trust != XENUS_TRUST_UNKNOWN)
+        return XENUS_ERR_ARG;
     e = trust_slot(path);
     if (!e)
-        return SCDE_ERR_FULL;
+        return XENUS_ERR_FULL;
     e->trust = trust;
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-int scde_trust_forget(const char *path)
+int xenus_trust_forget(const char *path)
 {
     int i;
 
-    if (scde_path_is_safe(path) != SCDE_OK)
-        return SCDE_ERR_ARG;
-    for (i = 0; i < SCDE_TRUST_MAX; i++) {
+    if (xenus_path_is_safe(path) != XENUS_OK)
+        return XENUS_ERR_ARG;
+    for (i = 0; i < XENUS_TRUST_MAX; i++) {
         if (trust_table[i].used && strcmp(trust_table[i].path, path) == 0) {
             memset(&trust_table[i], 0, sizeof(trust_table[i]));
-            return SCDE_OK;
+            return XENUS_OK;
         }
     }
-    return SCDE_ERR_NOT_FOUND;
+    return XENUS_ERR_NOT_FOUND;
 }
 
 /* --------------------------------------------------------- plugin gate -- */
@@ -229,94 +229,94 @@ int scde_trust_forget(const char *path)
  *   -> sandbox/process decision -> ABI validation (loader) -> init.
  *
  * In-process dlopen of native code is TRUSTED-ONLY: constructors and init
- * run inside the SCDE process, so there is no isolation to claim.  Loading
+ * run inside the XENUS process, so there is no isolation to claim.  Loading
  * an untrusted plugin requires the explicit unsafe policy override, and
  * even then it gets no capabilities (manager.c).
  */
-int scde_security_check_plugin(const char *path, scde_scan_result_t *result)
+int xenus_security_check_plugin(const char *path, xenus_scan_result_t *result)
 {
-    scde_scan_result_t local;
-    scde_scan_result_t *out = result ? result : &local;
-    scde_decision_t dec;
+    xenus_scan_result_t local;
+    xenus_scan_result_t *out = result ? result : &local;
+    xenus_decision_t dec;
     int trust;
     char subject[80];
 
     memset(out, 0, sizeof(*out));
-    out->status = SCDE_THREAT_UNKNOWN;
-    out->trust = SCDE_TRUST_UNKNOWN;
-    scde__ensure();
+    out->status = XENUS_THREAT_UNKNOWN;
+    out->trust = XENUS_TRUST_UNKNOWN;
+    xenus__ensure();
 
     snprintf(subject, sizeof(subject), "%.*s",
              (int)(sizeof(subject) - 1), path ? path : "-");
 
-    if (!path || !*path || scde_path_is_safe(path) != SCDE_OK) {
-        scde__stats()->rejected_plugins++;
-        scde_audit_log(SCDE_AUDIT_PLUGIN_REJECTED, subject, 90,
+    if (!path || !*path || xenus_path_is_safe(path) != XENUS_OK) {
+        xenus__stats()->rejected_plugins++;
+        xenus_audit_log(XENUS_AUDIT_PLUGIN_REJECTED, subject, 90,
                        "unsafe plugin path");
-        return SCDE_ERR;
+        return XENUS_ERR;
     }
 
     /* scan (no-op when the mode is OFF: trust + policy still apply) */
     {
-        int st = scde_scan_file(path, out);
+        int st = xenus_scan_file(path, out);
 
-        if (st != SCDE_OK && st != SCDE_ERR_STATE) {
-            scde__stats()->rejected_plugins++;
-            scde_audit_log(SCDE_AUDIT_PLUGIN_REJECTED, subject, 0,
+        if (st != XENUS_OK && st != XENUS_ERR_STATE) {
+            xenus__stats()->rejected_plugins++;
+            xenus_audit_log(XENUS_AUDIT_PLUGIN_REJECTED, subject, 0,
                            "plugin path unusable");
-            return SCDE_ERR;
+            return XENUS_ERR;
         }
     }
 
     /* trust: in-process native code requires TRUSTED */
-    trust = scde_trust_get(path);
+    trust = xenus_trust_get(path);
     out->trust = (int16_t)trust;
-    if (trust == SCDE_TRUST_BLOCKED) {
-        scde__stats()->rejected_plugins++;
-        scde_audit_log(SCDE_AUDIT_PLUGIN_REJECTED, subject, 100,
+    if (trust == XENUS_TRUST_BLOCKED) {
+        xenus__stats()->rejected_plugins++;
+        xenus_audit_log(XENUS_AUDIT_PLUGIN_REJECTED, subject, 100,
                        "plugin explicitly blocked");
-        return SCDE_ERR;
+        return XENUS_ERR;
     }
-    if (trust != SCDE_TRUST_TRUSTED) {
-        if (scde_policy_get(SCDE_POL_REQUIRE_TRUSTED_PLUGINS)) {
-            scde__stats()->rejected_plugins++;
-            scde__stats()->denied++;
-            scde_audit_log(SCDE_AUDIT_TRUST_REQUIRED, subject, 80,
+    if (trust != XENUS_TRUST_TRUSTED) {
+        if (xenus_policy_get(XENUS_POL_REQUIRE_TRUSTED_PLUGINS)) {
+            xenus__stats()->rejected_plugins++;
+            xenus__stats()->denied++;
+            xenus_audit_log(XENUS_AUDIT_TRUST_REQUIRED, subject, 80,
                            "plugin is not trusted");
-            return SCDE_ERR;
+            return XENUS_ERR;
         }
-        if (!scde_policy_get(SCDE_POL_ALLOW_UNTRUSTED_PLUGINS)) {
-            scde__stats()->rejected_plugins++;
-            scde__stats()->denied++;
-            scde_audit_log(SCDE_AUDIT_TRUST_REQUIRED, subject, 80,
+        if (!xenus_policy_get(XENUS_POL_ALLOW_UNTRUSTED_PLUGINS)) {
+            xenus__stats()->rejected_plugins++;
+            xenus__stats()->denied++;
+            xenus_audit_log(XENUS_AUDIT_TRUST_REQUIRED, subject, 80,
                            "in-process load requires TRUSTED");
-            return SCDE_ERR;
+            return XENUS_ERR;
         }
         /* explicit unsafe override: runs untrusted native code in-process */
-        scde_audit_log(SCDE_AUDIT_POLICY_FALLBACK, subject, 60,
+        xenus_audit_log(XENUS_AUDIT_POLICY_FALLBACK, subject, 60,
                        "untrusted plugin allowed by policy");
     }
 
     /* scanner/policy decision (fail-closed on error) */
-    if (scde_security_decide(out, &dec) != SCDE_OK || dec == SCDE_DECIDE_DENY) {
-        scde__stats()->rejected_plugins++;
-        scde__stats()->denied++;
-        scde_audit_log(SCDE_AUDIT_PLUGIN_REJECTED, subject, out->risk,
+    if (xenus_security_decide(out, &dec) != XENUS_OK || dec == XENUS_DECIDE_DENY) {
+        xenus__stats()->rejected_plugins++;
+        xenus__stats()->denied++;
+        xenus_audit_log(XENUS_AUDIT_PLUGIN_REJECTED, subject, out->risk,
                        "plugin failed the policy gate");
-        return SCDE_ERR;
+        return XENUS_ERR;
     }
 
-    if (trust == SCDE_TRUST_TRUSTED)
-        scde_audit_log(SCDE_AUDIT_PLUGIN_TRUSTED, path, 0, "trust check ok");
-    return SCDE_OK;
+    if (trust == XENUS_TRUST_TRUSTED)
+        xenus_audit_log(XENUS_AUDIT_PLUGIN_TRUSTED, path, 0, "trust check ok");
+    return XENUS_OK;
 }
 
 /* ----------------------------------------------------------- exec gate -- */
 
-/* subject of the most recent scde_security_gate_exec() call (for spawn) */
-static char last_exec_subject[SCDE_PATH_MAX];
+/* subject of the most recent xenus_security_gate_exec() call (for spawn) */
+static char last_exec_subject[XENUS_PATH_MAX];
 
-const char *scde__last_exec_subject(void)
+const char *xenus__last_exec_subject(void)
 {
     return last_exec_subject;
 }
@@ -403,7 +403,7 @@ static int copy_resolved(char *out, size_t out_len, char *rp)
 static int resolve_target(const char *word, char *out, size_t out_len)
 {
     const char *path_env;
-    char cand[SCDE_PATH_MAX];
+    char cand[XENUS_PATH_MAX];
 
     if (!word || !*word || !out || out_len == 0)
         return 0;
@@ -445,28 +445,28 @@ static int resolve_target(const char *word, char *out, size_t out_len)
 
 /*
  * Policy gate for spawning a command: resolve -> scan -> trust -> decide.
- * Fail-closed: any error keeps *out = SCDE_DECIDE_DENY.  Audits DENY and
+ * Fail-closed: any error keeps *out = XENUS_DECIDE_DENY.  Audits DENY and
  * unresolved-target fallbacks here; ALLOW/RESTRICT/SANDBOX outcomes are
  * audited by spawn() once the child verified its restrictions.
  */
-int scde_security_gate_exec(const char *cmd, scde_decision_t *out)
+int xenus_security_gate_exec(const char *cmd, xenus_decision_t *out)
 {
-    char word[SCDE_PATH_MAX];
-    char target[SCDE_PATH_MAX];
-    scde_scan_result_t r;
+    char word[XENUS_PATH_MAX];
+    char target[XENUS_PATH_MAX];
+    xenus_scan_result_t r;
     int have_target;
     int have_word;
 
     if (!out)
-        return SCDE_ERR_ARG;
-    *out = SCDE_DECIDE_DENY;
+        return XENUS_ERR_ARG;
+    *out = XENUS_DECIDE_DENY;
     if (!cmd || !*cmd)
-        return SCDE_ERR_ARG;
-    scde__ensure();
+        return XENUS_ERR_ARG;
+    xenus__ensure();
     {
-        scde_security_features_t f;
+        xenus_security_features_t f;
 
-        scde_security_features(&f);     /* probe once, reuse in children */
+        xenus_security_features(&f);     /* probe once, reuse in children */
         (void)f;
     }
 
@@ -484,81 +484,81 @@ int scde_security_gate_exec(const char *cmd, scde_decision_t *out)
 
     if (!have_target) {
         /* unknown target: policy default = restricted execution */
-        *out = SCDE_DECIDE_RESTRICT;
-        scde_audit_log(SCDE_AUDIT_POLICY_FALLBACK, last_exec_subject, 40,
+        *out = XENUS_DECIDE_RESTRICT;
+        xenus_audit_log(XENUS_AUDIT_POLICY_FALLBACK, last_exec_subject, 40,
                        "target not resolvable, restricting");
-        return SCDE_OK;
+        return XENUS_OK;
     }
 
     memset(&r, 0, sizeof(r));
-    r.status = SCDE_THREAT_UNKNOWN;
-    r.trust = SCDE_TRUST_UNKNOWN;
-    r.hash_status = SCDE_HASH_NOT_COMPUTED;
+    r.status = XENUS_THREAT_UNKNOWN;
+    r.trust = XENUS_TRUST_UNKNOWN;
+    r.hash_status = XENUS_HASH_NOT_COMPUTED;
     {
-        int st = scde_scan_file(target, &r);
+        int st = xenus_scan_file(target, &r);
 
-        if (st == SCDE_ERR_STATE) {
+        if (st == XENUS_ERR_STATE) {
             /* scanner off: trust + policy still decide, never "safe" */
-            r.status = SCDE_THREAT_UNKNOWN;
-            r.trust = (int16_t)scde_trust_get(target);
-            r.hash_status = SCDE_HASH_SKIPPED;
+            r.status = XENUS_THREAT_UNKNOWN;
+            r.trust = (int16_t)xenus_trust_get(target);
+            r.hash_status = XENUS_HASH_SKIPPED;
             snprintf(r.detail, sizeof(r.detail), "scanner off");
-        } else if (st != SCDE_OK) {
-            scde__stats()->denied++;
-            scde_audit_log(SCDE_AUDIT_PROCESS_BLOCKED, last_exec_subject, 95,
+        } else if (st != XENUS_OK) {
+            xenus__stats()->denied++;
+            xenus_audit_log(XENUS_AUDIT_PROCESS_BLOCKED, last_exec_subject, 95,
                            "scan failed");
-            return SCDE_OK;             /* DENY (fail-closed) */
+            return XENUS_OK;             /* DENY (fail-closed) */
         }
     }
 
-    if (scde_security_decide(&r, out) != SCDE_OK) {
-        *out = SCDE_DECIDE_DENY;
-        scde__stats()->denied++;
-        scde_audit_log(SCDE_AUDIT_PROCESS_BLOCKED, last_exec_subject, 95,
+    if (xenus_security_decide(&r, out) != XENUS_OK) {
+        *out = XENUS_DECIDE_DENY;
+        xenus__stats()->denied++;
+        xenus_audit_log(XENUS_AUDIT_PROCESS_BLOCKED, last_exec_subject, 95,
                        "decision failed");
-        return SCDE_OK;
+        return XENUS_OK;
     }
 
-    if (*out == SCDE_DECIDE_DENY) {
-        scde_security_features_t f;
+    if (*out == XENUS_DECIDE_DENY) {
+        xenus_security_features_t f;
 
-        scde_security_features(&f);
-        scde__stats()->denied++;
-        if (f.sandbox == SCDE_FEATURE_UNAVAILABLE &&
-            (r.trust == SCDE_TRUST_UNTRUSTED ||
-             r.status == SCDE_THREAT_SUSPICIOUS)) {
-            scde_audit_log(SCDE_AUDIT_SECURITY_FEATURE_UNAVAILABLE,
+        xenus_security_features(&f);
+        xenus__stats()->denied++;
+        if (f.sandbox == XENUS_FEATURE_UNAVAILABLE &&
+            (r.trust == XENUS_TRUST_UNTRUSTED ||
+             r.status == XENUS_THREAT_SUSPICIOUS)) {
+            xenus_audit_log(XENUS_AUDIT_SECURITY_FEATURE_UNAVAILABLE,
                            last_exec_subject, 80,
                            "sandbox unavailable, refusing target");
         }
-        scde_audit_log(SCDE_AUDIT_PROCESS_BLOCKED, last_exec_subject,
+        xenus_audit_log(XENUS_AUDIT_PROCESS_BLOCKED, last_exec_subject,
                        r.risk ? r.risk : 95, "blocked by policy");
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
 /* ------------------------------------------------------------ monitoring -- */
 
-int scde_security_watch_dir(const char *dir)
+int xenus_security_watch_dir(const char *dir)
 {
-    scde__ensure();
-    return scde__scanner_watch_dir(dir);
+    xenus__ensure();
+    return xenus__scanner_watch_dir(dir);
 }
 
-int scde_security_watch_defaults(void)
+int xenus_security_watch_defaults(void)
 {
     const char *sep;
     const char *p;
 
-    scde__ensure();
-    if (scde_security_get_scan_mode() != SCDE_SCAN_ALWAYS_ON)
-        return SCDE_ERR_STATE;
+    xenus__ensure();
+    if (xenus_security_get_scan_mode() != XENUS_SCAN_ALWAYS_ON)
+        return XENUS_ERR_STATE;
 
-    scde_security_watch_dir(db_dir);
+    xenus_security_watch_dir(db_dir);
 
-    p = scde_plugins_search_path();
+    p = xenus_plugins_search_path();
     while (p && *p) {
-        char dir[SCDE_PATH_MAX];
+        char dir[XENUS_PATH_MAX];
         size_t dlen;
 
         sep = strchr(p, ':');
@@ -566,44 +566,44 @@ int scde_security_watch_defaults(void)
         if (dlen > 0 && dlen < sizeof(dir)) {
             memcpy(dir, p, dlen);
             dir[dlen] = '\0';
-            scde_security_watch_dir(dir);
+            xenus_security_watch_dir(dir);
         }
         if (!sep)
             break;
         p = sep + 1;
     }
-    return SCDE_OK;
+    return XENUS_OK;
 }
 
-void scde_security_watch_stop(void)
+void xenus_security_watch_stop(void)
 {
-    scde__scanner_watch_stop();
+    xenus__scanner_watch_stop();
 }
 
-int scde_security_watch_fd(void)
+int xenus_security_watch_fd(void)
 {
-    if (!inited || scde_security_get_scan_mode() != SCDE_SCAN_ALWAYS_ON)
+    if (!inited || xenus_security_get_scan_mode() != XENUS_SCAN_ALWAYS_ON)
         return -1;
-    return scde__scanner_watch_fd();
+    return xenus__scanner_watch_fd();
 }
 
-int scde_security_pump(void)
+int xenus_security_pump(void)
 {
-    if (!inited || scde_security_get_scan_mode() != SCDE_SCAN_ALWAYS_ON)
-        return SCDE_ERR_STATE;
-    return scde__scanner_pump();
+    if (!inited || xenus_security_get_scan_mode() != XENUS_SCAN_ALWAYS_ON)
+        return XENUS_ERR_STATE;
+    return xenus__scanner_pump();
 }
 
-int scde_security_pending(void)
+int xenus_security_pending(void)
 {
-    if (!inited || scde_security_get_scan_mode() != SCDE_SCAN_ALWAYS_ON)
+    if (!inited || xenus_security_get_scan_mode() != XENUS_SCAN_ALWAYS_ON)
         return 0;
-    return scde__scanner_pending();
+    return xenus__scanner_pending();
 }
 
 /* ---------------------------------------------------------------- stats -- */
 
-void scde_security_stats(scde_scan_stats_t *out)
+void xenus_security_stats(xenus_scan_stats_t *out)
 {
     if (!out)
         return;

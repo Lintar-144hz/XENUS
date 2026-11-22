@@ -1,29 +1,29 @@
 /*
- * SCDE Security Layer - internal helpers shared by the security sources.
+ * XENUS Security Layer - internal helpers shared by the security sources.
  * Not installed; applications only see the public security.h header.
  */
-#ifndef SCDE_SECURITY_INTERNAL_H
-#define SCDE_SECURITY_INTERNAL_H
+#ifndef XENUS_SECURITY_INTERNAL_H
+#define XENUS_SECURITY_INTERNAL_H
 
-#include <scde/security.h>
+#include <xenus/security.h>
 
 /* provided by src/api/event.c (monotonic ms) */
-uint32_t scde_event_now_ms(void);
+uint32_t xenus_event_now_ms(void);
 
 /* owned by core.c */
-scde_scan_stats_t *scde__stats(void);
-void scde__ensure(void);                 /* lazy, idempotent init */
-const char *scde__last_exec_subject(void); /* subject of the last exec gate */
+xenus_scan_stats_t *xenus__stats(void);
+void xenus__ensure(void);                 /* lazy, idempotent init */
+const char *xenus__last_exec_subject(void); /* subject of the last exec gate */
 
 /* hooks implemented in scanner.c and driven by core.c */
-int scde__scanner_init(const char *db_dir);
-void scde__scanner_shutdown(void);
-int scde__scanner_reload(void);
-int scde__scanner_set_mode(int mode);
-int scde__scanner_watch_dir(const char *dir);
-void scde__scanner_watch_stop(void);
-int scde__scanner_watch_fd(void);
-int scde__scanner_pump(void);
-int scde__scanner_pending(void);
+int xenus__scanner_init(const char *db_dir);
+void xenus__scanner_shutdown(void);
+int xenus__scanner_reload(void);
+int xenus__scanner_set_mode(int mode);
+int xenus__scanner_watch_dir(const char *dir);
+void xenus__scanner_watch_stop(void);
+int xenus__scanner_watch_fd(void);
+int xenus__scanner_pump(void);
+int xenus__scanner_pending(void);
 
-#endif /* SCDE_SECURITY_INTERNAL_H */
+#endif /* XENUS_SECURITY_INTERNAL_H */

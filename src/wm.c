@@ -1,7 +1,9 @@
 /*
- * SCDE - window management (reparented frames with a calm Harbor title bar)
+ * XENUS - window management (reparented frames with a calm Harbor title bar)
  */
-#include "scde.h"
+#include "xenus.h"
+
+#include <xenus/notification.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -209,6 +211,8 @@ void unfocus_all(void)
     sc.focused = NULL;
 }
 
+static int ws_switching;
+
 void focus_client(Client *c)
 {
     if (!c) {
@@ -217,8 +221,14 @@ void focus_client(Client *c)
         panel_update();
         return;
     }
+    if (!ws_switching && c->workspace != sc.workspace)
+        workspace_switch(c->workspace);
     if (c->minimized)
         client_minimize(c, 0);
+    if (c->ws_hidden && c->frame != None) {
+        c->ws_hidden = 0;
+        XMapWindow(sc.dpy, c->frame);
+    }
 
     if (sc.focused == c) {
         if (c->frame != None)
@@ -337,7 +347,12 @@ void client_minimize(Client *c, int on)
         log_msg("minimize 0x%lx '%s'", (unsigned long)c->win, c->name);
     } else {
         set_wm_state(c->win, NormalState);
-        XMapWindow(sc.dpy, c->frame);
+        if (c->workspace == sc.workspace) {
+            c->ws_hidden = 0;
+            XMapWindow(sc.dpy, c->frame);
+        } else {
+            c->ws_hidden = 1;
+        }
         log_msg("restore 0x%lx '%s'", (unsigned long)c->win, c->name);
     }
     panel_update();
@@ -348,17 +363,21 @@ void show_desktop_toggle(void)
     Client *c;
     int visible = 0;
     /* internal windows hidden by show-desktop, restored on the way back */
-    static int hid_fm, hid_sg;
+    static int hid_fm, hid_sg, hid_sc;
 
     for (c = sc.clients; c; c = c->next)
-        if (!c->minimized)
+        if (!c->minimized && c->workspace == sc.workspace)
             visible++;
-    if (fm_open() || security_gui_open())
+    if (control_center_open())
+        control_center_hide();
+    if (notification_center_open())
+        notification_center_hide();
+    if (fm_open() || security_gui_open() || system_center_open())
         visible++;
 
     if (visible) {
         for (c = sc.clients; c; c = c->next)
-            if (!c->minimized)
+            if (!c->minimized && c->workspace == sc.workspace)
                 client_minimize(c, 1);
         /* internal apps hide to their taskbar entry, like a minimise */
         hid_fm = fm_open();
@@ -367,10 +386,13 @@ void show_desktop_toggle(void)
         hid_sg = security_gui_open();
         if (hid_sg)
             security_gui_hide();
+        hid_sc = system_center_open();
+        if (hid_sc)
+            system_center_hide();
         sc.show_desktop = 1;
     } else {
         for (c = sc.clients; c; c = c->next)
-            if (c->minimized)
+            if (c->minimized && c->workspace == sc.workspace)
                 client_minimize(c, 0);
         if (hid_fm) {
             hid_fm = 0;
@@ -379,6 +401,10 @@ void show_desktop_toggle(void)
         if (hid_sg) {
             hid_sg = 0;
             security_gui_show();
+        }
+        if (hid_sc) {
+            hid_sc = 0;
+            system_center_show();
         }
         sc.show_desktop = 0;
         if (sc.clients)
@@ -436,40 +462,51 @@ void close_client(Client *c)
         XSendEvent(sc.dpy, c->win, False, NoEventMask, &ev);
         log_msg("close (WM_DELETE_WINDOW) 0x%lx", (unsigned long)c->win);
     } else {
-        XKillClient(sc.dpy, c->win);
-        log_msg("close (XKillClient) 0x%lx", (unsigned long)c->win);
+        /* Graceful close only: never force-kill a client that did not
+           advertise WM_DELETE_WINDOW.  The user can still Quit an
+           application whose windows do honour the protocol. */
+        xenus_notify("Window manager",
+                    "The application does not support graceful close");
+        log_msg("close refused (no WM_DELETE_WINDOW) 0x%lx '%s'",
+                (unsigned long)c->win, c->name);
     }
 }
 
 void cycle_windows(int dir)
 {
-    Client *c, *prev = NULL, *picked = NULL;
+    Client *c, *prev = NULL, *first = NULL, *last = NULL;
+    Client *picked = NULL;
 
-    if (!sc.clients)
+    for (c = sc.clients; c; c = c->next) {
+        if (c->workspace != sc.workspace || c->minimized)
+            continue;
+        if (!first)
+            first = c;
+        last = c;
+    }
+    if (!first)
         return;
 
-    if (!sc.focused) {
-        picked = (dir >= 0) ? sc.clients : NULL;
-        if (!picked) {
-            for (c = sc.clients; c; c = c->next)
-                if (!c->next)
-                    picked = c;
-        }
-        focus_client(picked);
+    if (!sc.focused || sc.focused->workspace != sc.workspace) {
+        focus_client(dir >= 0 ? first : last);
         return;
     }
 
     if (dir >= 0) {
-        picked = sc.focused->next ? sc.focused->next : sc.clients;
+        picked = NULL;
+        for (c = sc.focused->next; c; c = c->next)
+            if (c->workspace == sc.workspace && !c->minimized) {
+                picked = c;
+                break;
+            }
+        if (!picked)
+            picked = first;
     } else {
-        for (c = sc.clients; c && c != sc.focused; c = c->next)
-            prev = c;
-        picked = prev;
-        if (!picked) {
-            for (c = sc.clients; c; c = c->next)
-                if (!c->next)
-                    picked = c;
+        for (c = first; c && c != sc.focused; c = c->next) {
+            if (c->workspace == sc.workspace && !c->minimized)
+                prev = c;
         }
+        picked = prev ? prev : last;
     }
     focus_client(picked);
 }
@@ -497,10 +534,33 @@ void active_close(void)
         fm_close();
         return;
     }
+    if (text_editor_open_state() &&
+        (fw == text_editor_window() || sc.focus_win == text_editor_window())) {
+        text_editor_close();
+        return;
+    }
     if (security_gui_open() &&
         (fw == security_gui_window() ||
          sc.focus_win == security_gui_window())) {
         security_gui_close();
+        return;
+    }
+    if (system_center_open() &&
+        (fw == system_center_window() ||
+         sc.focus_win == system_center_window())) {
+        system_center_close();
+        return;
+    }
+    if (control_center_open() &&
+        (fw == control_center_window() ||
+         sc.focus_win == control_center_window())) {
+        control_center_hide();
+        return;
+    }
+    if (notification_center_open() &&
+        (fw == notification_center_window() ||
+         sc.focus_win == notification_center_window())) {
+        notification_center_hide();
         return;
     }
     close_client(sc.focused);
@@ -515,10 +575,33 @@ void active_minimize(void)
         fm_hide();
         return;
     }
+    if (text_editor_open_state() &&
+        (fw == text_editor_window() || sc.focus_win == text_editor_window())) {
+        text_editor_hide();
+        return;
+    }
     if (security_gui_open() &&
         (fw == security_gui_window() ||
          sc.focus_win == security_gui_window())) {
         security_gui_hide();
+        return;
+    }
+    if (system_center_open() &&
+        (fw == system_center_window() ||
+         sc.focus_win == system_center_window())) {
+        system_center_hide();
+        return;
+    }
+    if (control_center_open() &&
+        (fw == control_center_window() ||
+         sc.focus_win == control_center_window())) {
+        control_center_hide();
+        return;
+    }
+    if (notification_center_open() &&
+        (fw == notification_center_window() ||
+         sc.focus_win == notification_center_window())) {
+        notification_center_hide();
         return;
     }
     if (sc.focused)
@@ -552,12 +635,53 @@ static int window_is_fullscreen(Window w)
 
 static void fetch_name(Client *c)
 {
-    char *name = NULL;
+    Atom actual = None;
+    int format = 0;
+    unsigned long nitems = 0, after = 0;
+    unsigned char *data = NULL;
 
     str_copy(c->name, sizeof(c->name), "untitled");
-    if (XFetchName(sc.dpy, c->win, &name) && name) {
-        str_copy(c->name, sizeof(c->name), name);
-        XFree(name);
+    if (XGetWindowProperty(sc.dpy, c->win, sc.atom_net_wm_name, 0, 1024,
+                           False, sc.atom_utf8_string, &actual, &format,
+                           &nitems, &after, &data) == Success &&
+        data && actual == sc.atom_utf8_string &&
+        format == 8 && nitems > 0) {
+        size_t n = nitems < sizeof(c->name) - 1 ? nitems
+                                                : sizeof(c->name) - 1;
+
+        memcpy(c->name, data, n);
+        c->name[n] = '\0';
+        XFree(data);
+        return;
+    }
+    if (data)
+        XFree(data);
+    {
+        char *name = NULL;
+
+        if (XFetchName(sc.dpy, c->win, &name) && name) {
+            str_copy(c->name, sizeof(c->name), name);
+            XFree(name);
+        }
+    }
+}
+
+static void fetch_app_id(Client *c)
+{
+    XClassHint hint;
+
+    c->app_class[0] = '\0';
+    c->app_instance[0] = '\0';
+    memset(&hint, 0, sizeof(hint));
+    if (XGetClassHint(sc.dpy, c->win, &hint)) {
+        if (hint.res_class)
+            str_copy(c->app_class, sizeof(c->app_class), hint.res_class);
+        if (hint.res_name)
+            str_copy(c->app_instance, sizeof(c->app_instance), hint.res_name);
+        if (hint.res_name)
+            XFree(hint.res_name);
+        if (hint.res_class)
+            XFree(hint.res_class);
     }
 }
 
@@ -609,8 +733,10 @@ void manage(Window w)
     c->h = wa.height > 0 ? wa.height : 240;
     c->bw = cfg.border_width;
     c->title_h = cfg.title_height;
+    c->workspace = sc.workspace;
     c->fullscreen = window_is_fullscreen(w);
     fetch_name(c);
+    fetch_app_id(c);
 
     fx = wa.x - c->bw;
     fy = wa.y - c->bw - c->title_h;
@@ -795,6 +921,8 @@ void handle_unmap_notify(XUnmapEvent *ev)
         c->ignore_unmap--;
         return;
     }
+    if (c->ws_hidden)
+        return;                         /* hidden by a workspace switch */
     if (c->minimized)
         return;                         /* we unmapped the frame ourselves */
     unmanage(c, 1);
@@ -847,6 +975,9 @@ void handle_client_message(XClientMessageEvent *ev)
             } else if (ev->window == security_gui_window() &&
                        security_gui_window() != None) {
                 security_gui_show();
+            } else if (ev->window == system_center_window() &&
+                       system_center_window() != None) {
+                system_center_show();
             }
         }
         return;
@@ -884,6 +1015,14 @@ void handle_expose(XExposeEvent *ev)
         return;
     }
     if (msgbox_expose(ev))
+        return;
+    if (system_center_expose(ev))
+        return;
+    if (control_center_expose(ev))
+        return;
+    if (notification_center_expose(ev))
+        return;
+    if (text_editor_expose(ev))
         return;
     if (security_gui_expose(ev))
         return;
@@ -1026,4 +1165,99 @@ void manage_existing(void)
     }
     if (children)
         XFree(children);
+}
+
+
+/* ---------------------------------------------------------- workspaces -- */
+
+int workspace_count(void)
+{
+    return XENUS_WORKSPACES;
+}
+
+int workspace_current(void)
+{
+    return sc.workspace;
+}
+
+const char *workspace_name(int index)
+{
+    static const char *names[XENUS_WORKSPACES] = {
+        "Desktop 1", "Desktop 2", "Desktop 3", "Desktop 4"
+    };
+
+    if (index < 0 || index >= XENUS_WORKSPACES)
+        return "Desktop";
+    return names[index];
+}
+
+void workspace_switch(int index)
+{
+    Client *c, *target = NULL;
+
+    if (index < 0)
+        index = XENUS_WORKSPACES - 1;
+    if (index >= XENUS_WORKSPACES)
+        index = 0;
+    if (index == sc.workspace && sc.workspace_count == XENUS_WORKSPACES)
+        return;
+
+    ws_switching = 1;
+    sc.workspace = index;
+    sc.workspace_count = XENUS_WORKSPACES;
+
+    for (c = sc.clients; c; c = c->next) {
+        if (c->workspace == index && !c->minimized) {
+            if (c->ws_hidden && c->frame != None)
+                XMapWindow(sc.dpy, c->frame);
+            c->ws_hidden = 0;
+            if (!target)
+                target = c;
+        } else if (c->frame != None && !c->ws_hidden &&
+                   c->workspace != index) {
+            c->ws_hidden = 1;
+            XUnmapWindow(sc.dpy, c->frame);
+        }
+    }
+
+    if (sc.focused && sc.focused->workspace != index) {
+        if (sc.focused->frame != None)
+            XSetWindowBorder(sc.dpy, sc.focused->frame,
+                             cfg.col_border_unfocus);
+        frame_paint(sc.focused);
+        sc.focused = NULL;
+        focus_drop(None);
+    }
+    if (target)
+        focus_client(target);
+    else {
+        sc.focused = NULL;
+        update_active_property();
+    }
+    ws_switching = 0;
+    panel_update();
+    desktop_damage(0, 0, sc.sw, sc.sh);
+    XFlush(sc.dpy);
+}
+
+void workspace_move_active(int index)
+{
+    Client *c = sc.focused;
+
+    if (!c)
+        return;
+    if (index < 0)
+        index = XENUS_WORKSPACES - 1;
+    if (index >= XENUS_WORKSPACES)
+        index = 0;
+    if (index == c->workspace)
+        return;
+    c->workspace = index;
+    if (c->frame != None) {
+        c->ws_hidden = 1;
+        XUnmapWindow(sc.dpy, c->frame);
+    }
+    sc.focused = NULL;
+    update_active_property();
+    panel_update();
 }

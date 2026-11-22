@@ -1,13 +1,17 @@
 build/
 build-debug/
 
-scde
-scde-debug
+/xenus
+/xenus-debug
+/xenus-bios
+/xfirm
 hal/libhal.a
 
 # test binaries (rebuilt by `make`)
 tests/api_test
 tests/security_test
+tests/net_test
+tests/bios_test
 
 # local session transcripts / AI tooling config - never committed
 session-*.md
@@ -23,3 +27,39 @@ opencode.json
 
 *~
 .DS_Store
+docs/archive/
+
+# === XENUS LOCAL / DO NOT PUSH ===
+/xenus
+/xenus-asan
+/xenus-ubsan
+/build/
+/tests/testclient
+/tests/cache_test
+/tests/ucore_test
+/hal/tests/hal_info
+/hal/tests/hal_smoke
+
+# Backup files
+*.bak
+*.bak.*
+*.pendingfix
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Temporary files
+*.log
+*.tmp
+*.swp
+__pycache__/
+.cache/
+
+# Local reports
+/tests/probe_report.json
