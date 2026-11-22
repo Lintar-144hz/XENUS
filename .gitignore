@@ -39,6 +39,7 @@ docs/archive/
 /tests/ucore_test
 /hal/tests/hal_info
 /hal/tests/hal_smoke
+design-reference/
 
 # Backup files
 *.bak
