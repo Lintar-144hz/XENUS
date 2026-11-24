@@ -1,0 +1,240 @@
+#include <xenus/ucore.h>
+#include "xenus.h"
+#include "auth_screen.h"
+
+#include <X11/keysym.h>
+#include <X11/Xutil.h>
+#include <string.h>
+#include <stdio.h>
+
+#define AUTH_INPUT_MAX 256
+
+static Window auth_window;
+static GC auth_gc;
+static int active;
+static int keyboard_grabbed;
+static int pointer_grabbed;
+static char password[AUTH_INPUT_MAX];
+static size_t password_len;
+static char message[128] = "Masukkan password untuk membuka XENUS";
+
+static void wipe_input(void)
+{
+    volatile char *p = password;
+
+    for (size_t i = 0; i < sizeof(password); i++)
+        p[i] = 0;
+
+    password_len = 0;
+}
+
+void auth_screen_draw(void)
+{
+    if (!active || !auth_window)
+        return;
+
+    Display *dpy = sc.dpy;
+    unsigned long bg = cfg.col_background;
+    unsigned long fg = cfg.col_menu_fg;
+    unsigned long accent = cfg.col_menu_sel;
+    unsigned long muted = cfg.col_border_unfocus;
+
+    XSetForeground(dpy, auth_gc, bg);
+    XFillRectangle(dpy, auth_window, auth_gc, 0, 0, sc.sw, sc.sh);
+
+    int cx = sc.sw / 2;
+    int cy = sc.sh / 2;
+
+    XSetForeground(dpy, auth_gc, fg);
+    XSetFont(dpy, auth_gc, sc.font_bold->fid);
+    XDrawString(dpy, auth_window, auth_gc,
+                cx - 95, cy - 95, "XENUS", 5);
+
+    XSetForeground(dpy, auth_gc, muted);
+    XSetFont(dpy, auth_gc, sc.font->fid);
+    XDrawString(dpy, auth_window, auth_gc,
+                cx - 145, cy - 55,
+                message, (int)strlen(message));
+
+    XSetForeground(dpy, auth_gc, cfg.col_menu_bg);
+    XFillRectangle(dpy, auth_window, auth_gc,
+                   cx - 150, cy - 25, 300, 42);
+
+    XSetForeground(dpy, auth_gc, accent);
+    XDrawRectangle(dpy, auth_window, auth_gc,
+                   cx - 150, cy - 25, 300, 42);
+
+    XSetForeground(dpy, auth_gc, fg);
+
+    char masked[AUTH_INPUT_MAX];
+    size_t n = password_len;
+
+    if (n >= sizeof(masked))
+        n = sizeof(masked) - 1;
+
+    memset(masked, '*', n);
+    masked[n] = '\0';
+
+    XDrawString(dpy, auth_window, auth_gc,
+                cx - 138, cy + 1, masked, (int)n);
+
+    XSetForeground(dpy, auth_gc, muted);
+    XDrawString(dpy, auth_window, auth_gc,
+                cx - 110, cy + 65,
+                "ENTER  untuk membuka desktop", 29);
+
+    XFlush(dpy);
+}
+
+int auth_screen_open(void)
+{
+    if (active)
+        return 0;
+
+    XSetWindowAttributes attr;
+    memset(&attr, 0, sizeof(attr));
+
+    attr.override_redirect = True;
+    attr.background_pixel = cfg.col_background;
+    attr.event_mask = ExposureMask | KeyPressMask |
+                      ButtonPressMask | StructureNotifyMask;
+
+    auth_window = XCreateWindow(
+        sc.dpy, sc.root,
+        0, 0, (unsigned int)sc.sw, (unsigned int)sc.sh,
+        0, CopyFromParent, InputOutput, CopyFromParent,
+        CWOverrideRedirect | CWBackPixel | CWEventMask,
+        &attr
+    );
+
+    if (!auth_window)
+        return -1;
+
+    auth_gc = XCreateGC(sc.dpy, auth_window, 0, NULL);
+    if (!auth_gc) {
+        XDestroyWindow(sc.dpy, auth_window);
+        auth_window = None;
+        return -1;
+    }
+
+    wipe_input();
+    active = 1;
+
+    XMapRaised(sc.dpy, auth_window);
+    XSetInputFocus(sc.dpy, auth_window, RevertToParent, CurrentTime);
+    XSync(sc.dpy, False);
+
+    int grab = XGrabKeyboard(
+        sc.dpy, auth_window, True,
+        GrabModeAsync, GrabModeAsync, CurrentTime
+    );
+
+    if (grab != GrabSuccess) {
+        auth_screen_close();
+        return -1;
+    }
+    keyboard_grabbed = 1;
+
+    grab = XGrabPointer(
+        sc.dpy, auth_window, True,
+        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        GrabModeAsync, GrabModeAsync,
+        auth_window, None, CurrentTime
+    );
+
+    if (grab != GrabSuccess) {
+        auth_screen_close();
+        return -1;
+    }
+    pointer_grabbed = 1;
+
+    auth_screen_draw();
+    XFlush(sc.dpy);
+    return 0;
+}
+
+void auth_screen_close(void)
+{
+    if (keyboard_grabbed)
+        XUngrabKeyboard(sc.dpy, CurrentTime);
+
+    if (pointer_grabbed)
+        XUngrabPointer(sc.dpy, CurrentTime);
+
+    keyboard_grabbed = 0;
+    pointer_grabbed = 0;
+
+    wipe_input();
+    active = 0;
+
+    if (auth_gc)
+        XFreeGC(sc.dpy, auth_gc);
+
+    if (auth_window)
+        XDestroyWindow(sc.dpy, auth_window);
+
+    auth_gc = NULL;
+    auth_window = None;
+
+    XFlush(sc.dpy);
+}
+
+int auth_screen_active(void)
+{
+    return active;
+}
+
+int auth_screen_handle_event(XEvent *ev)
+{
+    if (!active || !ev)
+        return 0;
+
+    if (ev->type == Expose) {
+        if (ev->xexpose.window == auth_window)
+            auth_screen_draw();
+        return 1;
+    }
+
+    if (ev->type == KeyPress) {
+        KeySym key;
+        char input[32];
+
+        int len = XLookupString(&ev->xkey, input,
+                                sizeof(input), &key, NULL);
+
+        if (key == XK_BackSpace) {
+            if (password_len > 0)
+                password[--password_len] = '\0';
+        } else if (key == XK_Return || key == XK_KP_Enter) {
+            password[password_len] = '\0';
+
+            if (xenus_auth_verify(password) == 0) {
+                snprintf(message, sizeof(message), "Berhasil");
+                auth_screen_close();
+                return 1;
+            }
+
+            snprintf(message, sizeof(message),
+                     "Password salah atau autentikasi ditolak");
+            wipe_input();
+        } else if (key == XK_Escape) {
+            /* Login tidak dapat dibatalkan dengan Escape. */
+        } else if (len > 0 && password_len + (size_t)len < sizeof(password) - 1) {
+            for (int i = 0; i < len; i++) {
+                unsigned char c = (unsigned char)input[i];
+
+                if (c >= 32 && c <= 126)
+                    password[password_len++] = (char)c;
+            }
+            password[password_len] = '\0';
+        }
+
+        auth_screen_draw();
+        return 1;
+    }
+
+    if (ev->type == ButtonPress)
+        return 1;
+
+    return 1;
+}

@@ -12,6 +12,7 @@ tests/api_test
 tests/security_test
 tests/net_test
 tests/bios_test
+tests/config_manager_test
 
 # local session transcripts / AI tooling config - never committed
 session-*.md

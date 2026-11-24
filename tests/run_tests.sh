@@ -1267,6 +1267,94 @@ else
 fi
 
 
+# ------------------------------------------------------- 22. Settings app
+log "[22] Settings personalization, panel preferences and persistence"
+
+xdotool key alt+i; sleep 0.8
+SW=$(xdotool search --onlyvisible --name '^XENUS Settings$' 2>/dev/null | head -1)
+if [ -n "${SW:-}" ]; then ok "Settings opens with Alt+I"; else bad "Settings opens with Alt+I"; fi
+if [ -n "${SW:-}" ]; then
+    if [ "$(geom_w "$SW")" = "820" ] && [ "$(geom_h "$SW")" = "600" ]; then
+        ok "Settings keeps its Phase 1 window size (820x600)"
+    else
+        bad "Settings keeps its Phase 1 window size ($(geom_w "$SW")x$(geom_h "$SW"))"
+    fi
+
+    eval "$(xdotool getwindowgeometry --shell "$SW")"
+    # Personalization is the first page: Light swatch at the right of the card.
+    xdotool mousemove $((X + 736)) $((Y + 193)); sleep 0.2
+    xdotool click 1; sleep 0.5
+    if grep -q '^theme=1$' "$HOME/.config/xenus/config"; then
+        ok "Settings saves the light theme through the Config Manager"
+    else
+        bad "Settings saves the light theme through the Config Manager"
+    fi
+    if grep -q '^background=#ececef$' "$HOME/.config/xenus/config"; then
+        ok "Settings persists the matching light palette"
+    else
+        bad "Settings persists the matching light palette"
+    fi
+
+    # Desktop page: increase the menu bar height by one step.
+    MBH_BEFORE=$(geom_h "$(xdotool search --onlyvisible --name '^xenus-menubar$' | head -1)")
+    PANEL_WANT=$((MBH_BEFORE + 4))
+    xdotool mousemove $((X + 105)) $((Y + 177)); sleep 0.2
+    xdotool click 1; sleep 0.4
+    xdotool mousemove $((X + 760)) $((Y + 202)); sleep 0.2
+    xdotool click 1; sleep 0.5
+    if grep -q "^panel_height=${PANEL_WANT}$" "$HOME/.config/xenus/config"; then
+        ok "Settings persists the menu bar height ($PANEL_WANT px)"
+    else
+        bad "Settings persists the menu bar height ($(grep '^panel_height=' "$HOME/.config/xenus/config"))"
+    fi
+    if [ "$(geom_h "$(xdotool search --onlyvisible --name '^xenus-menubar$' | head -1)")" = "$PANEL_WANT" ]; then
+        ok "menu bar height updates live"
+    else
+        bad "menu bar height updates live"
+    fi
+
+    # Animations toggle (third row of the taskbar card).
+    xdotool mousemove $((X + 739)) $((Y + 403)); sleep 0.2
+    xdotool click 1; sleep 0.5
+    if grep -q '^animations=0$' "$HOME/.config/xenus/config"; then
+        ok "Settings persists the animation preference"
+    else
+        bad "Settings persists the animation preference"
+    fi
+    xdotool key Escape; sleep 0.4
+    if xdotool search --onlyvisible --name '^XENUS Settings$' >/dev/null 2>&1; then
+        bad "Settings closes with Escape"
+    else
+        ok "Settings closes with Escape"
+    fi
+fi
+
+# restart: the saved panel height and light palette come back
+PANEL_WANT=${PANEL_WANT:-34}
+kill -TERM "$XENUS_PID" 2>/dev/null
+for i in $(seq 1 50); do kill -0 "$XENUS_PID" 2>/dev/null || break; sleep 0.1; done
+wait "$XENUS_PID" 2>/dev/null
+LOG="$WORK/xenus9.log"
+"$BIN" >"$LOG" 2>&1 &
+XENUS_PID=$!
+sleep 0.9
+if kill -0 "$XENUS_PID" 2>/dev/null; then
+    ok "restart keeps the Settings configuration"
+else
+    bad "restart keeps the Settings configuration"
+fi
+if [ "$(geom_h "$(xdotool search --onlyvisible --name '^xenus-menubar$' | head -1)")" = "$PANEL_WANT" ]; then
+    ok "restart applies the saved menu bar height"
+else
+    bad "restart applies the saved menu bar height"
+fi
+if grep -q '^theme=1$' "$HOME/.config/xenus/config" &&
+   grep -q '^background=#ececef$' "$HOME/.config/xenus/config"; then
+    ok "restart keeps the light theme palette on disk"
+else
+    bad "restart keeps the light theme palette on disk"
+fi
+
 # ------------------------------------------------------------- summary
 log ""
 log "== results: $PASS passed, $FAIL failed =="

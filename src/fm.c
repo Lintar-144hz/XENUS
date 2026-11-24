@@ -10,6 +10,7 @@
  */
 #include "xenus.h"
 #include "cache.h"
+#include "settings_prefs.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -1112,13 +1113,12 @@ static void fm_set_wallpaper(void)
         return;
     }
     fm_join(full, sizeof(full), cwd, e->name);
-    if (config_set_wallpaper(full) != 0) {
+    if (settings_prefs_set_wallpaper(full) != 0) {
         msgbox_show("Wallpaper not saved",
-                    "Could not write wallpaper= into\n"
-                    "~/.config/xenus/config");
+                    "Could not save wallpaper preference.");
         return;
     }
-    wallpaper_apply();
+    shell_refresh_theme();
 }
 
 static int fm_rm_rf(const char *path)

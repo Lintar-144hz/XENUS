@@ -7,6 +7,7 @@
  */
 #include "xenus.h"
 #include "auth_screen.h"
+#include "settings_prefs.h"
 
 #include <xenus/notification.h>
 #include <xenus/ucore.h>
@@ -484,9 +485,13 @@ static void cc_save_int(const char *key, int value)
 
 static void cc_apply_theme(int light)
 {
-    config_apply_theme(&cfg, light);
-    ui_set_accent(cfg.accent);
-    cc_save_int("theme", cfg.theme);
+    if (settings_prefs_set_theme(light) != 0) {
+        /* Manager unavailable: keep the legacy single-key behaviour so the
+           Control Center still works on an unusual config path. */
+        config_apply_theme(&cfg, light);
+        ui_set_accent(cfg.accent);
+        cc_save_int("theme", cfg.theme);
+    }
     snprintf(cc_status, sizeof(cc_status), "%s theme applied",
              light ? "Light" : "Dark");
     shell_refresh_theme();
@@ -494,9 +499,11 @@ static void cc_apply_theme(int light)
 
 static void cc_apply_accent(int accent)
 {
-    config_apply_accent(&cfg, accent);
-    ui_set_accent(cfg.accent);
-    cc_save_int("accent", cfg.accent);
+    if (settings_prefs_set_accent(accent) != 0) {
+        config_apply_accent(&cfg, accent);
+        ui_set_accent(cfg.accent);
+        cc_save_int("accent", cfg.accent);
+    }
     snprintf(cc_status, sizeof(cc_status), "Accent updated");
     shell_refresh_theme();
 }
@@ -599,8 +606,11 @@ static void cc_action(int id)
         }
         return;
     case CC_ID_ANIM:
-        cfg.animations = !cfg.animations;
-        cc_save_int("animations", cfg.animations);
+        if (settings_prefs_set_animations(!cfg.animations) != 0) {
+            cfg.animations = !cfg.animations;
+            cc_save_int("animations", cfg.animations);
+        }
+        dock_animations_changed();
         snprintf(cc_status, sizeof(cc_status), "Animations %s",
                  cfg.animations ? "on" : "off");
         break;

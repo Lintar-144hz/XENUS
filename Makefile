@@ -43,6 +43,7 @@ BIN       = xenus
 DEBUGBIN  = xenus-debug
 BIOSBIN   = xenus-bios
 XFIRMBIN  = xfirm
+XRECOVERYBIN = xrecovery
 OBJDIR    = build
 DEBUGDIR  = build-debug
 
@@ -53,12 +54,13 @@ TEST_TIMEOUT ?= 300
 SRC = src/main.c src/util.c src/ui.c src/config.c src/wm.c src/input.c \
       src/panel.c src/dock.c src/launcher.c src/apps.c src/msgbox.c src/fm.c \
       src/desktop.c src/security_gui.c src/text_editor.c src/taskbar.c src/system_center.c \
-      src/settings.c src/control_center.c src/notification_center.c src/auth_screen.c
+      src/settings.c src/settings_prefs.c src/control_center.c src/notification_center.c src/auth_screen.c
 OBJ = $(patsubst %.c,$(OBJDIR)/%.o,$(SRC))
 
 # the App API + plugin system: a static library shared by xenus and the tests
 APISRC = src/cache.c src/api/common.c src/api/config.c src/api/event.c \
          src/api/notification.c src/api/window.c src/api/app.c src/api/net.c \
+         src/config_manager.c \
          src/core/ucore.c src/core/auth.c src/core/sysinfo.c src/core/proc.c src/core/apps.c \
          src/bios/bios_config.c \
          src/plugin/loader.c src/plugin/manager.c \
@@ -81,7 +83,8 @@ DEP = $(OBJ:.o=.d) $(APIOBJ:.o=.d) $(BIOSOBJ:.o=.d) $(BIOSUIOBJ:.o=.d) \
       $(XFIRMOBJ:.o=.d)
 
 TESTBIN = tests/testclient tests/rootpixel tests/screenshot tests/api_test \
-          tests/security_test tests/cache_test tests/ucore_test tests/bios_test
+          tests/security_test tests/cache_test tests/ucore_test tests/bios_test \
+          tests/config_manager_test
 NETTEST  = tests/net_test
 
 # plugin shared objects (needed by the API tests)
@@ -91,7 +94,7 @@ BADVER_SO   = $(PLUGIN_DIR)/test-badver.so
 FAILINIT_SO = $(PLUGIN_DIR)/test-failinit.so
 PLUGINS     = $(EXAMPLE_SO) $(BADVER_SO) $(FAILINIT_SO)
 
-all: $(BIN) $(TESTBIN) $(BIOSBIN) $(XFIRMBIN)
+all: $(BIN) $(TESTBIN) $(BIOSBIN) $(XFIRMBIN) $(XRECOVERYBIN)
 
 $(BIN): $(OBJ) $(APILIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJ) $(APILIB) $(LDLIBS)
@@ -106,6 +109,9 @@ $(BIOSLIB): $(BIOSOBJ)
 
 $(BIOSBIN): $(BIOSUIOBJ) $(BIOSLIB) $(BIOSDEPS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BIOSUIOBJ) $(BIOSLIB) -lX11
+
+$(XRECOVERYBIN): src/recovery/xrecovery.c src/core/auth.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lcrypt
 
 $(XFIRMBIN): $(XFIRMOBJ) $(OBJDIR)/src/bios/bios_config.o $(BIOSDEPS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(XFIRMOBJ) \
@@ -135,6 +141,10 @@ tests/ucore_test: tests/ucore_test.c $(APILIB)
 tests/bios_test: tests/bios_test.c src/bios/bios_config.c $(BIOSDEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/bios_test.c \
 		src/bios/bios_config.c $(LDLIBS)
+
+tests/config_manager_test: tests/config_manager_test.c $(APILIB)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/config_manager_test.c \
+		$(APILIB) $(LDLIBS)
 
 tests/api_test: tests/api_test.c $(APILIB) $(PLUGINS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/api_test.c \
@@ -180,6 +190,8 @@ test: $(BIN) $(TESTBIN) hal
 	./tests/ucore_test
 	@echo "== XENUS BIOS engine tests =="
 	./tests/bios_test
+	@echo "== XENUS Config Manager tests =="
+	./tests/config_manager_test
 	@echo "== XENUS App API tests =="
 	./tests/api_test $(EXAMPLE_SO) $(BADVER_SO) $(FAILINIT_SO)
 	@echo "== XENUS security boundary tests =="
@@ -193,11 +205,12 @@ test-bios: $(BIOSBIN) $(XFIRMBIN) tests/bios_test
 test-bios-gui: $(BIOSBIN) $(XFIRMBIN)
 	bash tests/bios_ui_test.sh
 
-install: $(BIN) $(APILIB) $(BIOSBIN) $(XFIRMBIN)
+install: $(BIN) $(APILIB) $(BIOSBIN) $(XFIRMBIN) $(XRECOVERYBIN)
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(BIN) $(DESTDIR)$(BINDIR)/$(BIN)
 	install -m 755 $(BIOSBIN) $(DESTDIR)$(BINDIR)/$(BIOSBIN)
 	install -m 755 $(XFIRMBIN) $(DESTDIR)$(BINDIR)/$(XFIRMBIN)
+	install -m 755 $(XRECOVERYBIN) $(DESTDIR)$(BINDIR)/$(XRECOVERYBIN)
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 644 config/xenus-config.sample $(DESTDIR)$(SHAREDIR)/config.sample
 	install -d $(DESTDIR)$(INCDIR)/xenus
@@ -209,6 +222,7 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(BIN)
 	rm -f $(DESTDIR)$(BINDIR)/$(BIOSBIN)
 	rm -f $(DESTDIR)$(BINDIR)/$(XFIRMBIN)
+	rm -f $(DESTDIR)$(BINDIR)/$(XRECOVERYBIN)
 	rm -f $(DESTDIR)$(SHAREDIR)/config.sample
 	rm -rf $(DESTDIR)$(INCDIR)/xenus
 	rm -f $(DESTDIR)$(LIBDIR)/libxenusapp.a
@@ -216,7 +230,7 @@ uninstall:
 
 clean:
 	rm -rf $(OBJDIR) $(DEBUGDIR)
-	rm -f src/*.o $(BIN) $(DEBUGBIN) $(BIOSBIN) $(XFIRMBIN) $(TESTBIN)
+	rm -f src/*.o $(BIN) $(DEBUGBIN) $(BIOSBIN) $(XFIRMBIN) $(XRECOVERYBIN) $(TESTBIN)
 	$(MAKE) -C $(HALDIR) clean
 
 -include $(DEP)

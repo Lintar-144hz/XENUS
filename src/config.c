@@ -280,51 +280,6 @@ void config_add_defaults_menu(Config *c)
 }
 
 /*
- * Persist the wallpaper image path: rewrite the wallpaper= line of the
- * active config file (append it when missing).  Returns 0 on success.
- */
-int config_set_wallpaper(const char *path)
-{
-    char line[640];
-    char tmp[600];
-    FILE *in, *out;
-    int replaced = 0;
-
-    if (!path || !*path || !cfg.config_path[0])
-        return -1;
-
-    str_copy(cfg.wallpaper, sizeof(cfg.wallpaper), path);
-
-    snprintf(tmp, sizeof(tmp), "%s.tmp", cfg.config_path);
-    in = fopen(cfg.config_path, "r");
-    out = fopen(tmp, "w");
-    if (!out) {
-        if (in)
-            fclose(in);
-        return -1;
-    }
-    if (in) {
-        while (fgets(line, sizeof(line), in)) {
-            if (strncmp(line, "wallpaper=", 10) == 0) {
-                fprintf(out, "wallpaper=%s\n", path);
-                replaced = 1;
-            } else {
-                fputs(line, out);
-            }
-        }
-        fclose(in);
-    }
-    if (!replaced)
-        fprintf(out, "wallpaper=%s\n", path);
-    fclose(out);
-    if (rename(tmp, cfg.config_path) != 0) {
-        unlink(tmp);
-        return -1;
-    }
-    return 0;
-}
-
-/*
  * Apply a complete, coherent palette.  The dark palette is the original
  * Harbor set; the light palette keeps the same charcoal/silver discipline
  * with paper surfaces.  Explicit colours in the config are replaced when

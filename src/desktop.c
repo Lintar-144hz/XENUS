@@ -9,6 +9,7 @@
  */
 #define _XOPEN_SOURCE 700
 #include "xenus.h"
+#include "settings_prefs.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -771,13 +772,12 @@ static void desk_set_wallpaper(void)
                     "apt install feh");
         return;
     }
-    if (config_set_wallpaper(icons[sel].path) != 0) {
+    if (settings_prefs_set_wallpaper(icons[sel].path) != 0) {
         msgbox_show("Wallpaper not saved",
-                    "Could not write wallpaper= into\n"
-                    "~/.config/xenus/config");
+                    "Could not save wallpaper preference.");
         return;
     }
-    wallpaper_apply();
+    shell_refresh_theme();
 }
 
 static void desk_new_item(const char *base, int is_dir)

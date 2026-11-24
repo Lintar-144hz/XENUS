@@ -207,6 +207,18 @@ void panel_destroy(void)
     }
 }
 
+/* Rebuild the menu bar/dock after a height or geometry preference change. */
+void panel_reconfigure(void)
+{
+    menu_hide();
+    open_kind = -1;
+    hover_item = -1;
+    hover_tray = -1;
+    panel_destroy();
+    panel_create();
+    panel_raise();
+}
+
 void panel_raise(void)
 {
     dock_raise();

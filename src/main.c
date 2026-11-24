@@ -5,6 +5,7 @@
 #include "xenus.h"
 #include "auth_screen.h"
 #include "cache.h"
+#include "settings_prefs.h"
 
 #include <xenus/app.h>
 #include <xenus/bios.h>
@@ -541,6 +542,12 @@ static void event_loop(void)
 
         /* If the X queue is still busy, poll without blocking. */
         timeout = (processed == X_EVENT_BATCH || xenus_security_pending()) ? 0 : panel_timeout_ms();
+        {
+            int dms = dock_anim_timeout_ms();
+
+            if (dms >= 0 && (timeout < 0 || dms < timeout))
+                timeout = dms;
+        }
         rc = poll(pfds, (nfds_t)np, timeout);
 
         if (rc < 0) {
@@ -576,6 +583,7 @@ static void event_loop(void)
         }
 
         panel_tick();
+        dock_tick();
     }
 }
 
@@ -585,6 +593,7 @@ static void cleanup(void)
 {
     system_center_cleanup();
     settings_cleanup();
+    settings_prefs_shutdown();
     control_center_cleanup();
     notification_center_cleanup();
     security_gui_cleanup();
@@ -745,6 +754,12 @@ int main(int argc, char **argv)
         log_msg("loaded config %s", cfg.config_path);
     }
     config_add_defaults_menu(&cfg);
+
+    /* Settings-owned keys are validated through the Phase 2 Config Manager.
+       The manager shares this same user file and only touches its own keys. */
+    if (settings_prefs_init() != 0)
+        log_msg("Settings preferences unavailable: %s",
+                settings_prefs_error());
 
     /* XENUS BIOS startup flags are optional: no store means normal boot with
        no delay.  Safe mode is consumed here so the setup app can recover a

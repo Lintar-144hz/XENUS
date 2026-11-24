@@ -373,7 +373,6 @@ void config_defaults(Config *c);
 int config_load(Config *c, const char *path);
 int config_resolve_colors(Config *c);
 void config_add_defaults_menu(Config *c);
-int config_set_wallpaper(const char *path);
 void config_apply_theme(Config *c, int light);
 void config_apply_accent(Config *c, int accent);
 int config_set_value(const char *key, const char *value);
@@ -390,6 +389,7 @@ const char *apps_imageviewer(void);
 const char *apps_mediaplayer(void);
 int apps_have(const char *name);
 void wallpaper_apply(void);
+void wallpaper_apply_path(const char *path, int mode);
 void apps_run(const char *what, const char *cmd);
 void apps_run_terminal(const char *what);
 void apps_run_files(void);
@@ -472,6 +472,7 @@ unsigned int strip_mods(unsigned int state);
 
 void panel_create(void);
 void panel_destroy(void);
+void panel_reconfigure(void);
 void panel_update(void);
 void panel_raise(void);
 void panel_expose(XExposeEvent *ev);
@@ -495,6 +496,9 @@ void dock_motion(XMotionEvent *ev);
 void dock_leave(void);
 int dock_reserved(void);        /* dock height + margin below the desktop */
 void dock_resample_bg(void);    /* wallpaper changed: re-sample corners */
+void dock_tick(void);           /* step the hover animation */
+int dock_anim_timeout_ms(void); /* next animation frame, -1 when idle */
+void dock_animations_changed(void);
 
 /* -------------------------------------------------------------- launcher.c */
 

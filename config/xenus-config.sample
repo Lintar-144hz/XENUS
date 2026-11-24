@@ -16,7 +16,8 @@ focus_follows_mouse=1
 
 # ---------------------------------------------------------------- desktop
 # 0 = dark (default graphite), 1 = light paper surfaces.  Switch live from
-# Control Center > Desktop Settings; the key is rewritten in place.
+# Settings > Personalization or Control Center > Desktop Settings; the key
+# and the matching palette are rewritten in place.
 theme=0
 # 0 = Harbor blue, 1 = silver, 2 = graphite
 accent=0

@@ -32,6 +32,7 @@ static DockItem ditems[DOCK_MAX];
 static int nditems;
 static int dock_x, dock_y, dock_w;
 static int hover_dock = -1;
+static int hover_anim;
 static unsigned long corner_bg;
 
 static void app_initial(const char *title, char *out, size_t out_size)
@@ -212,7 +213,7 @@ static int dock_item_closable(int i)
 
 static void dock_close_pos(int i, int *cx, int *cy)
 {
-    int size = (i == hover_dock) ? DOCK_TILE + 8 : DOCK_TILE;
+    int size = (i == hover_dock) ? DOCK_TILE + hover_anim : DOCK_TILE;
     int tx = ditems[i].x - (size - DOCK_TILE) / 2;
     int ty = DOCK_H - 8 - size;
 
@@ -297,7 +298,7 @@ static void dock_paint(void)
 
     for (i = 0; i < nditems; i++) {
         int hovered = (i == hover_dock);
-        int size = hovered ? DOCK_TILE + 8 : DOCK_TILE;
+        int size = hovered ? DOCK_TILE + hover_anim : DOCK_TILE;
         int tx = ditems[i].x - (size - DOCK_TILE) / 2;
         int ty = DOCK_H - 8 - size;
         int running = 0, hidden = 0, focused = 0;
@@ -399,6 +400,8 @@ void dock_create(void)
 {
     XSetWindowAttributes wa;
 
+    hover_dock = -1;
+    hover_anim = 0;
     dock_layout();
     wa.override_redirect = True;
     wa.background_pixel = corner_bg;
@@ -557,6 +560,10 @@ void dock_motion(XMotionEvent *ev)
     found = dock_hit(ev->x);
     if (found != hover_dock) {
         hover_dock = found;
+        if (cfg.animations)
+            hover_anim = 0;             /* grow the new tile from rest */
+        else
+            hover_anim = found >= 0 ? 8 : 0;
         dock_update();
     }
 }
@@ -565,6 +572,55 @@ void dock_leave(void)
 {
     if (hover_dock != -1) {
         hover_dock = -1;
+        if (!cfg.animations)
+            hover_anim = 0;
+        dock_update();
+    }
+}
+
+/* --------------------------------------------------------- dock motion -- */
+
+static int dock_anim_target(void)
+{
+    return hover_dock >= 0 ? 8 : 0;
+}
+
+void dock_tick(void)
+{
+    int target;
+
+    if (!sc.dock)
+        return;
+    target = dock_anim_target();
+    if (!cfg.animations) {
+        if (hover_anim != target) {
+            hover_anim = target;
+            dock_update();
+        }
+        return;
+    }
+    if (hover_anim == target)
+        return;
+    if (hover_anim < target)
+        hover_anim = hover_anim + 2 > target ? target : hover_anim + 2;
+    else
+        hover_anim = hover_anim - 2 < target ? target : hover_anim - 2;
+    dock_update();
+}
+
+int dock_anim_timeout_ms(void)
+{
+    if (!sc.dock || !cfg.animations)
+        return -1;
+    return hover_anim != dock_anim_target() ? 16 : -1;
+}
+
+void dock_animations_changed(void)
+{
+    if (!sc.dock)
+        return;
+    if (!cfg.animations) {
+        hover_anim = dock_anim_target();
         dock_update();
     }
 }

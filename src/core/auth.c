@@ -47,10 +47,33 @@ static int auth_read(char *hash, size_t size)
     return hash[0] ? 1 : -1;
 }
 
-static int auth_write(const char *hash)
+static int auth_write_all(int fd, const char *data, size_t len)
 {
-    char tmp[sizeof(auth.path) + 8];
-    int n = snprintf(tmp, sizeof(tmp), "%s.tmp", auth.path);
+    size_t offset = 0;
+
+    while (offset < len) {
+        ssize_t written = write(fd, data + offset, len - offset);
+
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+
+        if (written == 0)
+            return -1;
+
+        offset += (size_t)written;
+    }
+
+    return 0;
+}
+
+static int auth_write_file(const char *path, const char *value)
+{
+    char tmp[600];
+    int n = snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
     if (n < 0 || (size_t)n >= sizeof(tmp))
         return -1;
 
@@ -58,18 +81,27 @@ static int auth_write(const char *hash)
     if (fd < 0)
         return -1;
 
-    size_t len = strlen(hash);
-    ssize_t written = write(fd, hash, len);
-    int ok = written == (ssize_t)len && fsync(fd) == 0;
+    size_t len = strlen(value);
+    int ok = auth_write_all(fd, value, len) == 0 &&
+             fchmod(fd, 0600) == 0 &&
+             fsync(fd) == 0;
+
     if (close(fd) != 0)
         ok = 0;
 
-    if (!ok || rename(tmp, auth.path) != 0) {
+    if (!ok || rename(tmp, path) != 0) {
         unlink(tmp);
         return -1;
     }
-    return chmod(auth.path, 0600);
+
+    return 0;
 }
+
+static int auth_write(const char *hash)
+{
+    return auth_write_file(auth.path, hash);
+}
+
 
 int xenus_auth_init(void)
 {
@@ -251,29 +283,7 @@ static int auth_read_path(const char *path, char *out, size_t size)
 
 static int auth_write_path(const char *path, const char *value)
 {
-    char tmp[600];
-    int n = snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-
-    if (n < 0 || (size_t)n >= sizeof(tmp))
-        return -1;
-
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    if (fd < 0)
-        return -1;
-
-    size_t len = strlen(value);
-    ssize_t written = write(fd, value, len);
-    int ok = written == (ssize_t)len && fsync(fd) == 0;
-
-    if (close(fd) != 0)
-        ok = 0;
-
-    if (!ok || rename(tmp, path) != 0) {
-        unlink(tmp);
-        return -1;
-    }
-
-    return chmod(path, 0600);
+    return auth_write_file(path, value);
 }
 
 static int auth_generate_recovery_key(char *out, size_t size)
@@ -376,8 +386,11 @@ fail:
 int xenus_auth_recover(const char *recovery_key)
 {
     char recovery_path[600];
+    char auth_backup[620];
+    char recovery_backup[620];
     char stored[AUTH_HASH_SIZE] = {0};
     struct crypt_data data = {0};
+    struct stat st;
 
     if (!auth.initialized || !auth.enabled ||
         !recovery_key || strlen(recovery_key) != 64)
@@ -398,14 +411,35 @@ int xenus_auth_recover(const char *recovery_key)
     if (!valid)
         return -1;
 
-    if (unlink(auth.path) != 0)
+    if (snprintf(auth_backup, sizeof(auth_backup), "%s.recovered",
+                 auth.path) >= (int)sizeof(auth_backup) ||
+        snprintf(recovery_backup, sizeof(recovery_backup), "%s.recovered",
+                 recovery_path) >= (int)sizeof(recovery_backup))
         return -1;
 
-    if (unlink(recovery_path) != 0)
+    /* Jangan menimpa backup recovery dari proses sebelumnya. */
+    if (lstat(auth_backup, &st) == 0 || errno != ENOENT)
         return -1;
+
+    if (lstat(recovery_backup, &st) == 0 || errno != ENOENT)
+        return -1;
+
+    /* Pindahkan kedua verifier sebelum mengubah status autentikasi. */
+    if (rename(auth.path, auth_backup) != 0)
+        return -1;
+
+    if (rename(recovery_path, recovery_backup) != 0) {
+        rename(auth_backup, auth.path);
+        return -1;
+    }
 
     auth.enabled = 0;
     auth.locked = 0;
     auth.failures = 0;
+
+    /* File backup bukan lagi verifier aktif; bersihkan jika memungkinkan. */
+    unlink(auth_backup);
+    unlink(recovery_backup);
+
     return 0;
 }
