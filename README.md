@@ -23,26 +23,22 @@ A lightweight Linux desktop environment written from scratch in **C11 + Xlib**.
 
 <img src="screenshot-desktop.png" alt="XENUS desktop" width="880">
 
+<sub><i>Interface capture from an earlier revision · the current Harbor shell uses traffic-light controls and a floating dock.</i></sub>
+
 <br><br>
 
 <table>
   <tr>
     <td align="center">
-      <img src="screenshot-menu.png" alt="XENUS application menu" width="420"><br>
+      <img src="screenshot-menu.png" alt="XENUS application menu" width="280"><br>
       <sub><b>Application Menu</b></sub>
     </td>
     <td align="center">
-      <img src="screenshot-firefox.png" alt="Firefox running on XENUS" width="420"><br>
+      <img src="screenshot-firefox.png" alt="Firefox running on XENUS" width="280"><br>
       <sub><b>Applications</b></sub>
     </td>
-  </tr>
-  <tr>
     <td align="center">
-      <img src="screenshot.png" alt="XENUS desktop environment" width="420"><br>
-      <sub><b>Desktop Environment</b></sub>
-    </td>
-    <td align="center">
-      <img src="screenshot-missing.png" alt="XENUS missing program notice" width="420"><br>
+      <img src="screenshot-missing.png" alt="XENUS missing program notice" width="280"><br>
       <sub><b>Missing Program Notice</b></sub>
     </td>
   </tr>
@@ -76,11 +72,21 @@ with **Termux:X11** as the X server, and portable to ordinary Linux desktops.
 | **Status** | Active development |
 | **License** | MIT |
 
+### Documentation
+
+| Document | Contents |
+|---|---|
+| [`docs/XENUS_APP_API.md`](docs/XENUS_APP_API.md) | App API, event queue, windows, notifications and plugin ABI |
+| [`docs/UCORE.md`](docs/UCORE.md) | UCore runtime, snapshots, registries, events and hardware probe |
+| [`docs/BIOS.md`](docs/BIOS.md) | XENUS BIOS / X-FIRM pages and recovery boundaries |
+| [`config/xenus-config.sample`](config/xenus-config.sample) | Annotated configuration template |
+
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Documentation](#documentation)
 - [Current Status](#current-status)
 - [Features](#features)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
@@ -435,7 +441,7 @@ xenus/
 │   ├── UCORE.md               UCore runtime reference
 │   └── BIOS.md                XENUS BIOS (X-FIRM) setup environment
 ├── include/xenus/             public App API headers
-│   ├── app.h  event.h  plugin.h  window.h  notification.h
+│   ├── app.h  event.h  plugin.h  window.h  notification.h  common.h
 │   ├── config.h  config_manager.h  net.h  ucore.h  bios.h
 │   └── security.h  security_bait.h  security_mirage.h  security_resource.h
 ├── plugins/example/           example plugin (built by `make plugins`)
@@ -1083,3 +1089,6 @@ Copyright © 2026 Lintar-144hz.
 All images are captured from a real session with `tests/shoot.sh` and live in
 the project root: `screenshot-desktop.png`, `screenshot-menu.png`,
 `screenshot-firefox.png`, `screenshot.png` and `screenshot-missing.png`.
+
+They show an **earlier revision** of the shell and are retained as historical
+captures; they do not yet show the Harbor traffic-light chrome or floating dock.
