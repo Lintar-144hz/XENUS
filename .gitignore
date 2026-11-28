@@ -17,6 +17,9 @@ tests/config_manager_test
 # local session transcripts / AI tooling config - never committed
 session-*.md
 opencode.json
+.opencode/
+AGENTS.md
+AGENTs.md
 
 *.o
 *.a
