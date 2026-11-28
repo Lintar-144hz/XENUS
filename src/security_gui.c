@@ -47,7 +47,9 @@ typedef struct {
 } SecBtn;
 
 static Window sg_win;
+static WinFx sg_fx;
 static int sg_open;
+static int sg_close_pending;
 static int sg_x, sg_y;                    /* dragged position */
 static SecBtn sg_btns[SG_MAX_BTNS];
 static int sg_nbtns;
@@ -612,10 +614,39 @@ static void sg_draw(void)
     XFlush(sc.dpy);
 }
 
+/* ------------------------------------------------- shell motion glue -- */
+
+static void sg_open_done(void *ctx)
+{
+    (void)ctx;
+    if (sg_open)
+        sg_draw();
+}
+
+static void sg_hide_done(void *ctx)
+{
+    (void)ctx;
+    XUnmapWindow(sc.dpy, sg_win);
+    XFlush(sc.dpy);
+}
+
+static void sg_close_done(void *ctx)
+{
+    (void)ctx;
+    sg_close_pending = 0;
+    sg_fx.has_pose = 0;             /* dock layout changed; re-anchor on open */
+    XUnmapWindow(sc.dpy, sg_win);
+    taskbar_unregister(sg_win);
+    panel_update();
+    XFlush(sc.dpy);
+}
+
 /* --------------------------------------------------------------- public -- */
 
 void security_gui_show(void)
 {
+    int was_open = sg_open;
+
     if (!sg_win) {
         XSetWindowAttributes wa;
 
@@ -648,10 +679,16 @@ void security_gui_show(void)
     sg_open = 1;
     sg_hover = -1;
     sg_hover_light = -1;
-    XMapRaised(sc.dpy, sg_win);
-    focus_track(sg_win);
     taskbar_register(sg_win, TASK_APP_SECURITY, "XENUS Security");
     taskbar_set_hidden(sg_win, 0);
+    if (!was_open) {
+        winfx_cancel(&sg_fx, 0);
+        sg_close_pending = 0;
+        winfx_open(&sg_fx, sg_win, "xenus:security", sg_x, sg_y,
+                   SG_W, SG_H, 1, 14, sg_open_done, NULL);
+    }
+    XMapRaised(sc.dpy, sg_win);
+    focus_track(sg_win);
     panel_update();
     XFlush(sc.dpy);
     sg_draw();
@@ -674,6 +711,7 @@ void security_gui_hide(void)
     if (!sg_open)
         return;
     sg_open = 0;
+    sg_close_pending = 0;
     focus_drop(sg_win);
     /* focus falls back to the last focused client window, if any */
     if (sc.focused && !sc.focused->minimized)
@@ -681,8 +719,8 @@ void security_gui_hide(void)
     taskbar_register(sg_win, TASK_APP_SECURITY, "XENUS Security");
     taskbar_set_hidden(sg_win, 1);
     panel_update();
-    XUnmapWindow(sc.dpy, sg_win);
-    XFlush(sc.dpy);
+    winfx_cancel(&sg_fx, 0);
+    winfx_close(&sg_fx, sg_win, sg_hide_done, NULL);
 }
 
 /*
@@ -693,14 +731,23 @@ void security_gui_close(void)
 {
     if (sg_win == None)
         return;
+    if (sg_fx.closing) {
+        if (sg_close_pending)
+            return;                     /* close animation already running */
+        /* a minimise is in flight: finish it, then drop the entry */
+        winfx_cancel(&sg_fx, 0);
+        sg_close_done(NULL);
+        return;
+    }
     if (sg_open) {
         sg_open = 0;
         focus_drop(sg_win);
-        XUnmapWindow(sc.dpy, sg_win);
-        XFlush(sc.dpy);
+        winfx_cancel(&sg_fx, 0);
+        sg_close_pending = 1;
+        winfx_close(&sg_fx, sg_win, sg_close_done, NULL);
+        return;
     }
-    taskbar_unregister(sg_win);
-    panel_update();
+    sg_close_done(NULL);
 }
 
 int security_gui_open(void)

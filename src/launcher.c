@@ -2,6 +2,7 @@
  * XENUS - launcher (searchable app menu), desktop menu, Alt+F2 run prompt
  */
 #include "xenus.h"
+#include "motion.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -52,6 +53,62 @@ static int menu_anchor_x = -1, menu_anchor_y = -1;
 static int menu_dock_anchor;
 static MenuEntry desktop_items[24];
 static int desktop_n;
+
+typedef struct {
+    Window win;
+    int x0, y0;
+    int x1, y1;
+} SlideAnim;
+
+static SlideAnim menu_slide;
+static SlideAnim cmd_slide;
+
+static void slide_step(void *ctx, float t)
+{
+    SlideAnim *a = ctx;
+
+    if (a->win == None)
+        return;
+    XMoveWindow(sc.dpy, a->win,
+                motion_lerp(a->x0, a->x1, t),
+                motion_lerp(a->y0, a->y1, t));
+}
+
+static void menu_slide_done(void *ctx)
+{
+    SlideAnim *a = ctx;
+
+    if (a->win != None)
+        XUnmapWindow(sc.dpy, a->win);
+}
+
+static void cmd_slide_done(void *ctx)
+{
+    SlideAnim *a = ctx;
+
+    if (a->win != None)
+        XUnmapWindow(sc.dpy, a->win);
+}
+
+/* slide a popup into place from a few pixels away (direction aware) */
+static void popup_slide_in(SlideAnim *a, Window win, int x, int y, int dy)
+{
+    motion_cancel(MOTION_CH_MENU, a, 0);
+    if (win == None)
+        return;
+    if (!cfg.animations) {
+        XMoveWindow(sc.dpy, win, x, y);
+        return;
+    }
+    a->win = win;
+    a->x0 = x;
+    a->x1 = x;
+    a->y0 = y + dy;
+    a->y1 = y;
+    XMoveWindow(sc.dpy, win, a->x0, a->y0);
+    motion_start(MOTION_CH_MENU, a, 120, MOTION_EASE_OUT, slide_step,
+                 NULL, a);
+}
 
 static void menu_geometry(void);
 static void menu_create_window(void);
@@ -272,6 +329,7 @@ static void menu_relayout(void)
 {
     if (!menu_open)
         return;
+    motion_cancel(MOTION_CH_MENU, &menu_slide, 0);
     menu_refilter();
     menu_layout();
     menu_create_window();
@@ -456,6 +514,8 @@ static void menu_open_common(int desktop, MenuEntry *src, int n,
 
     XMapRaised(sc.dpy, sc.menu);
     menu_open = 1;
+    popup_slide_in(&menu_slide, sc.menu, menu_mx, menu_my,
+                   menu_dock_anchor ? 14 : -12);
 
     XGrabKeyboard(sc.dpy, sc.menu, True, GrabModeAsync, GrabModeAsync,
                   CurrentTime);
@@ -528,8 +588,21 @@ void menu_hide(void)
     menu_open = 0;
     XUngrabKeyboard(sc.dpy, CurrentTime);
     XUngrabPointer(sc.dpy, CurrentTime);
-    if (sc.menu != None)
-        XUnmapWindow(sc.dpy, sc.menu);
+    if (sc.menu != None) {
+        if (cfg.animations) {
+            menu_slide.win = sc.menu;
+            menu_slide.x0 = menu_mx;
+            menu_slide.x1 = menu_mx;
+            menu_slide.y0 = menu_my;
+            menu_slide.y1 = menu_my + (menu_dock_anchor ? 14 : -12);
+            motion_cancel(MOTION_CH_MENU, &menu_slide, 0);
+            motion_start(MOTION_CH_MENU, &menu_slide, 110, MOTION_EASE_IN,
+                         slide_step, menu_slide_done, &menu_slide);
+        } else {
+            motion_cancel(MOTION_CH_MENU, &menu_slide, 0);
+            XUnmapWindow(sc.dpy, sc.menu);
+        }
+    }
     XFlush(sc.dpy);
 }
 
@@ -755,6 +828,18 @@ static void wm_about_keys(void)
                 "Alt+E files   Alt+S security   Alt+D show desktop");
 }
 
+static void menu_set_launch_origin(int index)
+{
+    int row = index - menu_scroll;
+    int size = menu_icon > 0 ? menu_icon : 42;
+    int cy;
+
+    if (row < 0)
+        row = 0;
+    cy = menu_my + row_top() + row * menu_item_h + menu_item_h / 2;
+    winfx_origin_set(menu_mx + menu_mw / 2, cy, size, size);
+}
+
 static void menu_activate(int index)
 {
     MenuEntry e;
@@ -773,17 +858,21 @@ static void menu_activate(int index)
             apps_run_terminal("terminal");
         else if (strcmp(e.cmd, "@editor") == 0)
             apps_run_terminal("editor");
-        else if (strcmp(e.cmd, "@files") == 0)
+        else if (strcmp(e.cmd, "@files") == 0) {
+            if (!fm_open())
+                menu_set_launch_origin(index);
             fm_show();
-        else if (strcmp(e.cmd, "@apps") == 0)
+        } else if (strcmp(e.cmd, "@apps") == 0)
             menu_show();
         else if (strcmp(e.cmd, "@desktop") == 0)
             desktop_menu_show(NULL);
         else if (strcmp(e.cmd, "@browser") == 0)
             apps_run("browser", apps_browser());
-        else if (strcmp(e.cmd, "@security") == 0)
+        else if (strcmp(e.cmd, "@security") == 0) {
+            if (!security_gui_open())
+                menu_set_launch_origin(index);
             security_gui_toggle();
-        else if (strcmp(e.cmd, "@control") == 0)
+        } else if (strcmp(e.cmd, "@control") == 0)
             control_center_toggle();
         else if (strcmp(e.cmd, "@control-settings") == 0)
             control_center_show_settings();
@@ -1049,6 +1138,7 @@ void cmd_show(void)
 
     XMapRaised(sc.dpy, sc.cmd);
     cmd_open = 1;
+    popup_slide_in(&cmd_slide, sc.cmd, cmd_x, cmd_y, -12);
     XGrabKeyboard(sc.dpy, sc.cmd, True, GrabModeAsync, GrabModeAsync,
                   CurrentTime);
     XFlush(sc.dpy);
@@ -1060,8 +1150,21 @@ void cmd_hide(void)
         return;
     cmd_open = 0;
     XUngrabKeyboard(sc.dpy, CurrentTime);
-    if (sc.cmd != None)
-        XUnmapWindow(sc.dpy, sc.cmd);
+    if (sc.cmd != None) {
+        if (cfg.animations) {
+            cmd_slide.win = sc.cmd;
+            cmd_slide.x0 = cmd_x;
+            cmd_slide.x1 = cmd_x;
+            cmd_slide.y0 = cmd_y;
+            cmd_slide.y1 = cmd_y - 12;
+            motion_cancel(MOTION_CH_MENU, &cmd_slide, 0);
+            motion_start(MOTION_CH_MENU, &cmd_slide, 110, MOTION_EASE_IN,
+                         slide_step, cmd_slide_done, &cmd_slide);
+        } else {
+            motion_cancel(MOTION_CH_MENU, &cmd_slide, 0);
+            XUnmapWindow(sc.dpy, sc.cmd);
+        }
+    }
     XFlush(sc.dpy);
 }
 

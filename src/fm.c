@@ -69,7 +69,9 @@ typedef struct {
 } FmEntry;
 
 static Window fm_win;
+static WinFx fm_fx;
 static int fm_is_open;
+static int fm_close_pending;
 static int fx, fy, fw, fh;
 static char cwd[FM_PATH_MAX];
 
@@ -1341,6 +1343,35 @@ static void fm_ctx_activate(void)
     }
 }
 
+/* ------------------------------------------------- shell motion glue -- */
+
+static void fm_open_done(void *ctx)
+{
+    (void)ctx;
+    if (fm_is_open)
+        fm_draw();
+}
+
+static void fm_hide_done(void *ctx)
+{
+    (void)ctx;
+    XUnmapWindow(sc.dpy, fm_win);
+    fm_cache_sync();
+    XFlush(sc.dpy);
+}
+
+static void fm_close_done(void *ctx)
+{
+    (void)ctx;
+    fm_close_pending = 0;
+    fm_fx.has_pose = 0;             /* dock layout changed; re-anchor on open */
+    XUnmapWindow(sc.dpy, fm_win);
+    taskbar_unregister(fm_win);
+    fm_cache_sync();
+    panel_update();
+    XFlush(sc.dpy);
+}
+
 /* ---------------------------------------------------------- public API -- */
 
 void fm_show(void)
@@ -1359,6 +1390,8 @@ void fm_show(void)
     }
 
     fm_layout();
+    winfx_cancel(&fm_fx, 0);
+    fm_close_pending = 0;
 
     if (fm_win == None) {
         XSetWindowAttributes wa;
@@ -1372,9 +1405,6 @@ void fm_show(void)
                                CopyFromParent,
                                CWOverrideRedirect | CWBackPixel | CWEventMask,
                                &wa);
-    } else {
-        XMoveResizeWindow(sc.dpy, fm_win, fx, fy, (unsigned)fw,
-                          (unsigned)fh);
     }
 
     if (cwd[0] == '\0') {
@@ -1394,10 +1424,12 @@ void fm_show(void)
     fm_set_name();
     fm_is_open = 1;
     fm_cache_sync();
-    XMapRaised(sc.dpy, fm_win);
-    focus_track(fm_win);
     taskbar_register(fm_win, TASK_APP_FM, "File Manager");
     taskbar_set_hidden(fm_win, 0);
+    winfx_open(&fm_fx, fm_win, "xenus:fm", fx, fy, fw, fh, 0, 0,
+               fm_open_done, NULL);
+    XMapRaised(sc.dpy, fm_win);
+    focus_track(fm_win);
     panel_update();
     XFlush(sc.dpy);
     fm_draw();
@@ -1420,6 +1452,7 @@ void fm_hide(void)
     if (!fm_is_open)
         return;
     fm_is_open = 0;
+    fm_close_pending = 0;
     mode = FM_MODE_NORMAL;
     focus_drop(fm_win);
     /* focus falls back to the last focused client window, if any */
@@ -1428,9 +1461,8 @@ void fm_hide(void)
     taskbar_register(fm_win, TASK_APP_FM, "File Manager");
     taskbar_set_hidden(fm_win, 1);
     panel_update();
-    XUnmapWindow(sc.dpy, fm_win);
-    fm_cache_sync();
-    XFlush(sc.dpy);
+    winfx_cancel(&fm_fx, 0);
+    winfx_close(&fm_fx, fm_win, fm_hide_done, NULL);
 }
 
 /*
@@ -1441,16 +1473,24 @@ void fm_close(void)
 {
     if (fm_win == None)
         return;
+    if (fm_fx.closing) {
+        if (fm_close_pending)
+            return;                     /* close animation already running */
+        /* a minimise is in flight: finish it, then drop the entry */
+        winfx_cancel(&fm_fx, 0);
+        fm_close_done(NULL);
+        return;
+    }
     if (fm_is_open) {
         fm_is_open = 0;
         mode = FM_MODE_NORMAL;
         focus_drop(fm_win);
-        XUnmapWindow(sc.dpy, fm_win);
-        XFlush(sc.dpy);
+        winfx_cancel(&fm_fx, 0);
+        fm_close_pending = 1;
+        winfx_close(&fm_fx, fm_win, fm_close_done, NULL);
+        return;
     }
-    taskbar_unregister(fm_win);
-    fm_cache_sync();
-    panel_update();
+    fm_close_done(NULL);
 }
 
 int fm_open(void)

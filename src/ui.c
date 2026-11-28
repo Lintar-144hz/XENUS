@@ -20,6 +20,17 @@ static UiShapeQueryFn shape_query;
 static UiShapeMaskFn shape_mask;
 static int shape_loaded;
 
+/*
+ * One reusable 1-bit mask for every rounded window.  Creating a pixmap and
+ * a GC for each geometry frame (open, close, maximise, workspace slide) was
+ * the dominant per-frame X round-trip; the mask contents are copied by the
+ * server inside XShapeCombineMask, so reusing the pixmap is safe.
+ */
+static Pixmap shape_cache;
+static GC shape_cache_gc;
+static int shape_cache_w, shape_cache_h;
+static Display *shape_cache_dpy;
+
 static XFontStruct *load_first_font(const char *const *patterns)
 {
     XFontStruct *f;
@@ -376,8 +387,6 @@ void ui_round_outline(Window w, int x, int y, int wd, int hg, int r,
 
 void ui_shape_round(Window w, int wd, int hg, int r)
 {
-    Pixmap mask;
-    GC mgc;
     int ev, er;
 
     if (!sc.dpy || w == None || wd <= 2 || hg <= 2)
@@ -407,16 +416,45 @@ void ui_shape_round(Window w, int wd, int hg, int r)
     }
     if (!shape_mask)
         return;
-    mask = XCreatePixmap(sc.dpy, sc.root, (unsigned)wd, (unsigned)hg, 1);
-    if (mask == None)
-        return;
-    mgc = XCreateGC(sc.dpy, mask, 0, NULL);
-    XSetForeground(sc.dpy, mgc, 0);
-    XFillRectangle(sc.dpy, mask, mgc, 0, 0, (unsigned)wd, (unsigned)hg);
-    round_draw(sc.dpy, mask, mgc, 0, 0, wd, hg, r, 1);
-    shape_mask(sc.dpy, w, 0, 0, 0, mask, 0);
-    XFreeGC(sc.dpy, mgc);
-    XFreePixmap(sc.dpy, mask);
+    if (shape_cache_dpy != sc.dpy) {
+        if (shape_cache_gc)
+            XFreeGC(shape_cache_dpy, shape_cache_gc);
+        if (shape_cache)
+            XFreePixmap(shape_cache_dpy, shape_cache);
+        shape_cache = None;
+        shape_cache_gc = NULL;
+        shape_cache_w = shape_cache_h = 0;
+        shape_cache_dpy = sc.dpy;
+    }
+    if (shape_cache == None || wd > shape_cache_w || hg > shape_cache_h) {
+        int nw = wd > shape_cache_w ? wd : shape_cache_w;
+        int nh = hg > shape_cache_h ? hg : shape_cache_h;
+
+        if (shape_cache_gc)
+            XFreeGC(sc.dpy, shape_cache_gc);
+        if (shape_cache != None)
+            XFreePixmap(sc.dpy, shape_cache);
+        shape_cache = XCreatePixmap(sc.dpy, sc.root, (unsigned)nw,
+                                    (unsigned)nh, 1);
+        if (shape_cache == None) {
+            shape_cache_w = shape_cache_h = 0;
+            return;
+        }
+        shape_cache_gc = XCreateGC(sc.dpy, shape_cache, 0, NULL);
+        if (!shape_cache_gc) {
+            XFreePixmap(sc.dpy, shape_cache);
+            shape_cache = None;
+            shape_cache_w = shape_cache_h = 0;
+            return;
+        }
+        shape_cache_w = nw;
+        shape_cache_h = nh;
+    }
+    XSetForeground(sc.dpy, shape_cache_gc, 0);
+    XFillRectangle(sc.dpy, shape_cache, shape_cache_gc, 0, 0,
+                   (unsigned)shape_cache_w, (unsigned)shape_cache_h);
+    round_draw(sc.dpy, shape_cache, shape_cache_gc, 0, 0, wd, hg, r, 1);
+    shape_mask(sc.dpy, w, 0, 0, 0, shape_cache, 0);
 }
 
 void ui_draw_traffic(Window w, int x, int cy, int active, int hover,

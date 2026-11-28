@@ -1,4 +1,5 @@
 #include "xenus.h"
+#include "motion.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -33,7 +34,10 @@ static int nditems;
 static int dock_x, dock_y, dock_w;
 static int hover_dock = -1;
 static int hover_anim;
+static int hover_from, hover_to;
 static unsigned long corner_bg;
+
+static void dock_anim_to(int target);
 
 static void app_initial(const char *title, char *out, size_t out_size)
 {
@@ -402,6 +406,8 @@ void dock_create(void)
 
     hover_dock = -1;
     hover_anim = 0;
+    hover_from = 0;
+    hover_to = 0;
     dock_layout();
     wa.override_redirect = True;
     wa.background_pixel = corner_bg;
@@ -560,10 +566,7 @@ void dock_motion(XMotionEvent *ev)
     found = dock_hit(ev->x);
     if (found != hover_dock) {
         hover_dock = found;
-        if (cfg.animations)
-            hover_anim = 0;             /* grow the new tile from rest */
-        else
-            hover_anim = found >= 0 ? 8 : 0;
+        dock_anim_to(found >= 0 ? 8 : 0);
         dock_update();
     }
 }
@@ -572,8 +575,7 @@ void dock_leave(void)
 {
     if (hover_dock != -1) {
         hover_dock = -1;
-        if (!cfg.animations)
-            hover_anim = 0;
+        dock_anim_to(0);
         dock_update();
     }
 }
@@ -585,14 +587,19 @@ static int dock_anim_target(void)
     return hover_dock >= 0 ? 8 : 0;
 }
 
-void dock_tick(void)
+static void dock_anim_step(void *ctx, float t)
 {
-    int target;
+    (void)ctx;
+    hover_anim = motion_lerp(hover_from, hover_to, t);
+    dock_update();
+}
 
+static void dock_anim_to(int target)
+{
     if (!sc.dock)
         return;
-    target = dock_anim_target();
     if (!cfg.animations) {
+        motion_cancel(MOTION_CH_DOCK, &hover_anim, 0);
         if (hover_anim != target) {
             hover_anim = target;
             dock_update();
@@ -601,18 +608,84 @@ void dock_tick(void)
     }
     if (hover_anim == target)
         return;
-    if (hover_anim < target)
-        hover_anim = hover_anim + 2 > target ? target : hover_anim + 2;
-    else
-        hover_anim = hover_anim - 2 < target ? target : hover_anim - 2;
+    hover_from = hover_anim;
+    hover_to = target;
+    if (!motion_start(MOTION_CH_DOCK, &hover_anim, 140, MOTION_EASE_OUT,
+                      dock_anim_step, NULL, NULL)) {
+        /* scheduler full: snap instead of leaving the tile mid-grow */
+        hover_anim = target;
+        dock_update();
+    }
+}
+
+void dock_tick(void)
+{
+    /* hover motion is driven by the shared motion engine */
+}
+
+int dock_app_anchor(const char *app_key, int *cx, int *cy, int *w, int *h)
+{
+    char other[160];
+    int i, found = 0;
+
+    if (w)
+        *w = 42;
+    if (h)
+        *h = 42;
+
+    taskbar_sync();
+    /*
+     * Refresh the dock through its public update path: dock_layout() alone
+     * would leave dock_w/dock_x advanced while the real X window still has
+     * the old geometry, so the next dock_update() would think nothing
+     * changed and never resize it.
+     */
     dock_update();
+
+    if (app_key && app_key[0]) {
+        for (i = 0; i < nditems; i++) {
+            if (ditems[i].task < 0)
+                continue;
+            if (taskbar_app_key(ditems[i].task, other, sizeof(other)) != 0 ||
+                strcmp(app_key, other) != 0)
+                continue;
+            if (cx)
+                *cx = dock_x + ditems[i].x + DOCK_TILE / 2;
+            if (cy)
+                *cy = dock_y + DOCK_H / 2;
+            found = 1;
+            break;
+        }
+    }
+
+    if (!found) {
+        if (cx)
+            *cx = sc.dock ? dock_x + dock_w / 2 : sc.sw / 2;
+        if (cy)
+            *cy = sc.dock ? dock_y + DOCK_H / 2 : sc.sh - DOCK_H;
+    }
+    return found;
+}
+
+int dock_client_anchor(const Client *c, int *cx, int *cy, int *w, int *h)
+{
+    char key[160];
+
+    if (c && c->app_class[0])
+        snprintf(key, sizeof(key), "app:%s", c->app_class);
+    else if (c && c->app_instance[0])
+        snprintf(key, sizeof(key), "instance:%s", c->app_instance);
+    else if (c)
+        snprintf(key, sizeof(key), "window:%s", c->name);
+    else
+        key[0] = '\0';
+
+    return dock_app_anchor(key, cx, cy, w, h);
 }
 
 int dock_anim_timeout_ms(void)
 {
-    if (!sc.dock || !cfg.animations)
-        return -1;
-    return hover_anim != dock_anim_target() ? 16 : -1;
+    return -1;
 }
 
 void dock_animations_changed(void)
@@ -620,7 +693,10 @@ void dock_animations_changed(void)
     if (!sc.dock)
         return;
     if (!cfg.animations) {
+        motion_cancel(MOTION_CH_DOCK, &hover_anim, 0);
         hover_anim = dock_anim_target();
         dock_update();
+    } else {
+        dock_anim_to(dock_anim_target());
     }
 }

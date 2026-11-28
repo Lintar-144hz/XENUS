@@ -116,6 +116,39 @@ typedef struct {
 
 /* ----------------------------------------------------------------- client */
 
+/* geometry keyframes used by the motion engine (frame coordinates) */
+typedef struct {
+    int x0, y0, w0, h0;
+    int x1, y1, w1, h1;
+} MotionRect;
+
+typedef struct {
+    int x, y, w, h;
+} MotionKey;
+
+#define MOTION_KEYS 3
+
+/*
+ * Geometry motion state for shell-owned (non-Client) windows such as the
+ * File Manager and Security Center.  They bypass manage(), so they cannot
+ * use the client frame animation; this state lets them share the same
+ * Motion Engine keyframes without duplicating the scheduler code.
+ */
+typedef struct {
+    Window win;
+    int x, y, w, h;             /* resting geometry */
+    int shaped, radius;         /* shape the window while it moves */
+    int has_pose;               /* a previous tween left a valid pose */
+    int closing;                /* collapse-to-dock tween is in flight */
+    int animating;
+    MotionKey key[MOTION_KEYS];
+    float split;
+    int ease0, ease1;
+    char app_key[96];
+    void (*done)(void *ctx);
+    void *done_ctx;
+} WinFx;
+
 typedef struct Client Client;
 struct Client {
     Window win;                 /* application window */
@@ -132,6 +165,17 @@ struct Client {
     int ignore_unmap;
     int workspace;              /* 0..XENUS_WORKSPACES-1 */
     int ws_hidden;              /* unmapped by a workspace switch */
+    int closing;                /* close animation in flight */
+    int focus_mix;              /* 0 = inactive, 100 = focused */
+    int focus_from, focus_to;   /* focus cross-fade keyframes */
+    MotionRect anim_rect;       /* geometry tween keyframes */
+    MotionKey anim_key[MOTION_KEYS];
+    int anim_nkeys;
+    float anim_split;           /* 0..1 progress of the middle keyframe */
+    int anim_ease0, anim_ease1;
+    int geom_animating;         /* geometry tween owns the current pose */
+    int has_fade;               /* fade_from -> fade_to during the tween */
+    float fade_from, fade_to;
     char name[NAME_MAX_LEN];
     char app_class[64];         /* WM_CLASS res_class, for app grouping */
     char app_instance[64];      /* WM_CLASS res_name */
@@ -176,6 +220,8 @@ typedef struct {
     Atom atom_net_supported;
     Atom atom_net_supporting_wm_check;
     Atom atom_xenus_task_list;
+    Atom atom_net_wm_opacity;
+    int composited;             /* _NET_WM_CM_Sn owner present */
     Window wm_check;
 
     int workspace;              /* active workspace */
@@ -500,6 +546,30 @@ void dock_tick(void);           /* step the hover animation */
 int dock_anim_timeout_ms(void); /* next animation frame, -1 when idle */
 void dock_animations_changed(void);
 
+/*
+ * Screen-space anchor (centre) and size of the dock tile representing the
+ * client's application group.  Returns 1 when the real tile was found and
+ * 0 when the caller should treat the result as a generic dock fallback.
+ */
+int dock_client_anchor(const Client *c, int *cx, int *cy, int *w, int *h);
+
+/* The same anchor lookup for a shell-owned app key such as "xenus:fm". */
+int dock_app_anchor(const char *app_key, int *cx, int *cy, int *w, int *h);
+
+/* ---------------------------------------------------------------- winfx.c */
+
+/*
+ * Open/close motion for override-redirect shell windows.  Reuses the
+ * geometry channel and the same easing/timing as managed clients.
+ */
+void winfx_origin_set(int cx, int cy, int w, int h);
+int winfx_open(WinFx *fx, Window win, const char *app_key,
+               int x, int y, int w, int h, int shaped, int radius,
+               void (*done)(void *ctx), void *done_ctx);
+int winfx_close(WinFx *fx, Window win,
+                void (*done)(void *ctx), void *done_ctx);
+void winfx_cancel(WinFx *fx, int finish);
+
 /* -------------------------------------------------------------- launcher.c */
 
 void menu_show(void);
@@ -646,5 +716,18 @@ int  desktop_button(XButtonEvent *ev);
 int  desktop_motion(XMotionEvent *ev);
 int  desktop_expose(XExposeEvent *ev);
 void desktop_root_property(XPropertyEvent *ev);
+
+/* ------------------------------------------------------------ overview.c */
+/* live window overview (Mission-Control style, no compositor required) */
+void overview_init(void);
+void overview_toggle(void);
+void overview_close(void);
+void overview_close_now(void);
+int  overview_is_open(void);
+void overview_forget(Client *c);
+void overview_select(Client *c);
+int  overview_expose(XExposeEvent *ev);
+int  overview_button(XButtonEvent *ev);
+void overview_cleanup(void);
 
 #endif /* XENUS_H */

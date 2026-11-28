@@ -3,6 +3,7 @@
  * X11 connection, startup/shutdown and the single event loop.
  */
 #include "xenus.h"
+#include "motion.h"
 #include "auth_screen.h"
 #include "cache.h"
 #include "settings_prefs.h"
@@ -160,6 +161,15 @@ static void setup_atoms(void)
     sc.atom_net_supporting_wm_check =
         XInternAtom(sc.dpy, "_NET_SUPPORTING_WM_CHECK", False);
     sc.atom_xenus_task_list = XInternAtom(sc.dpy, "_XENUS_TASK_LIST", False);
+    sc.atom_net_wm_opacity =
+        XInternAtom(sc.dpy, "_NET_WM_WINDOW_OPACITY", False);
+    {
+        char cm[32];
+
+        snprintf(cm, sizeof(cm), "_NET_WM_CM_S%d", DefaultScreen(sc.dpy));
+        sc.composited =
+            XGetSelectionOwner(sc.dpy, XInternAtom(sc.dpy, cm, False)) != None;
+    }
 }
 
 /* announce the EWMH hints we implement (lets tools such as xdotool see us) */
@@ -543,10 +553,10 @@ static void event_loop(void)
         /* If the X queue is still busy, poll without blocking. */
         timeout = (processed == X_EVENT_BATCH || xenus_security_pending()) ? 0 : panel_timeout_ms();
         {
-            int dms = dock_anim_timeout_ms();
+            int mms = motion_timeout_ms();
 
-            if (dms >= 0 && (timeout < 0 || dms < timeout))
-                timeout = dms;
+            if (mms >= 0 && (timeout < 0 || mms < timeout))
+                timeout = mms;
         }
         rc = poll(pfds, (nfds_t)np, timeout);
 
@@ -582,6 +592,7 @@ static void event_loop(void)
             }
         }
 
+        motion_tick();
         panel_tick();
         dock_tick();
     }
@@ -606,6 +617,7 @@ static void cleanup(void)
     xenus_net_shutdown();
     xenus_app_shutdown();
 
+    overview_cleanup();
     menu_hide();
     cmd_hide();
     fm_cleanup();
@@ -669,6 +681,7 @@ static void cleanup(void)
     XSync(sc.dpy, False);
     XCloseDisplay(sc.dpy);
     sc.dpy = NULL;
+    motion_shutdown();
 
     if (sc.lock_fd >= 0) {
         close(sc.lock_fd);
@@ -827,6 +840,8 @@ int main(int argc, char **argv)
     setup_root();
     setup_ewmh();
     setup_wallpaper();
+    motion_init();
+    overview_init();
 
     log_msg("XENUS %s started on %dx%d (display %s)", XENUS_VERSION, sc.sw,
             sc.sh, DisplayString(sc.dpy));

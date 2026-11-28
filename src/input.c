@@ -62,6 +62,7 @@ void input_grab_keys(void)
     grab_key(XK_F4, Mod1Mask);              /* close */
     grab_key(XK_F2, Mod1Mask);              /* run command */
     grab_key(XK_space, Mod1Mask);           /* application menu */
+    grab_key(XK_o, Mod1Mask);               /* window overview */
     grab_key(XK_Return, Mod1Mask);          /* terminal */
     grab_key(XK_Tab, Mod1Mask);             /* switch windows */
     grab_key(XK_Tab, Mod1Mask | ShiftMask);
@@ -399,6 +400,21 @@ void handle_key_press(XKeyEvent *ev)
                 (unsigned long)ev->window, ev->state);
     if (msgbox_key(ev))
         return;
+    if (overview_is_open()) {
+        if (sym == XK_Escape || (base == Mod1Mask && sym == XK_o)) {
+            overview_close();
+            return;
+        }
+        if ((mod & (Mod1Mask | ControlMask)) ==
+            (Mod1Mask | ControlMask) &&
+            (sym == XK_Left || sym == XK_Right)) {
+            int dir = sym == XK_Right ? 1 : -1;
+
+            workspace_switch((workspace_current() + dir +
+                              workspace_count()) % workspace_count());
+        }
+        return;
+    }
     /* Inside our own application windows Alt+chords stay window-manager
        level (close, minimise, switch, ...): our windows use no Alt-based
        input, so swallowing them here would break Alt+F4 / Alt+Down. */
@@ -474,6 +490,9 @@ void handle_key_press(XKeyEvent *ev)
         else
             menu_show();
         break;
+    case XK_o:
+        overview_toggle();
+        break;
     case XK_Return:
         spawn(cfg.terminal);
         break;
@@ -548,6 +567,18 @@ void handle_button_press(XButtonEvent *ev)
         return;
     if (fm_button(ev))
         return;
+    if (overview_button(ev))
+        return;
+    if (overview_is_open()) {
+        Client *oc = client_find(ev->window);
+
+        if (oc) {
+            overview_select(oc);
+            return;
+        }
+        if (!client_from_frame(ev->window))
+            overview_close_now();      /* dock / panel / root: dismiss */
+    }
 
     /* clicking the desktop dismisses the transient panels */
     if (ev->window == sc.root) {
